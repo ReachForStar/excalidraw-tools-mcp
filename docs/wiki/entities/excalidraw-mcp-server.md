@@ -44,7 +44,7 @@ MCP 工具：`excalidraw_read`、`excalidraw_write`、`excalidraw_draw`、`excal
 ## 上下游依赖
 
 - 上游：`@modelcontextprotocol/sdk` 1.32.1（stdio、Streamable HTTP、内存传输测试）、`zod` 4（入参校验与 JSON Schema 生成）。
-- 导出：`@excalidraw/utils` 0.1.5（Excalidraw 官方导出实现，prod 包约 19 MB）、`playwright-core`（驱动本机浏览器，不下载浏览器）、运行环境需 Chrome/Chromium。
+- 导出：`@excalidraw/utils` 0.1.5（Excalidraw 官方导出实现，prod 包约 19 MB；版本锁定，0.1.6 的接口改为 `exportScene`，升级前须改桥接页）、`playwright-core`（驱动本机浏览器，不下载浏览器）、运行环境需 Chrome/Chromium。
 - 可选：`@deepseek-ai/cordis`、`@deepseek-ai/dsh-tools`、`@deepseek-ai/dsh-workspace`、`@deepseek-ai/dsh-util-values`，仅插件入口使用，声明为可选 peer。
 - 下游：任意 MCP 客户端（Claude Code、Codex、OpenCode）；Web 画布标签页共享同一场景文件。
 
