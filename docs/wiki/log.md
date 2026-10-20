@@ -93,3 +93,4 @@
 - 本机代理会拦截该国内端点，新增 `NO_PROXY` 到 `.bashrc`、`environment.d` 与 Claude `settings.json`；常驻客户端需重启以读取新环境。
 - 卸载此前为验证 Release 安装的全局包，移除 `excalidraw-mcp` 命令。
 - 新增 `queries/mcp-clients-install.md`，更新部署页与 index。
+- `develop` Test run `39438655744` 与 `master` run `39438685151` 均通过。
