@@ -4,6 +4,8 @@ description: "Excalidraw 画布工具：以 MCP 服务（stdio / Streamable HTTP
 
 # @reachforstar/excalidraw-tools
 
+[![CI](https://github.com/ReachForStar/excalidraw-tools-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ReachForStar/excalidraw-tools-mcp/actions/workflows/ci.yml)
+
 简体中文
 
 ## 概述
@@ -51,11 +53,15 @@ node lib/mcp.js --version
 
 ### 全局安装
 
+从源码打包：
+
 ```sh
 pnpm pack
 npm install -g ./reachforstar-excalidraw-tools-0.1.0.tgz
 excalidraw-mcp --version
 ```
+
+也可以从 [GitHub Release](https://github.com/ReachForStar/excalidraw-tools-mcp/releases/tag/v0.1.0) 下载同一版本的 tarball，再执行 `npm install -g`。
 
 npm 会把 `bin/excalidraw-mcp` 安装为指向 `lib/mcp.js` 的符号链接。当前入口会先解析真实路径再判断是否为主模块，因此直接执行 `excalidraw-mcp` 可以正常启动。
 
@@ -389,6 +395,8 @@ pnpm run build
 ```
 
 `tests/` 覆盖工具注册、场景读写、多图形增删改查、元素增删改查、布局、图片插入、形状展开、路径越界、截图、HTTP 鉴权、CLI 参数与符号链接入口识别，共 52 项。
+
+CI 在 push 和 pull request 时执行 typecheck、test、build 与 `pnpm pack`；推送 `v*` tag 时，Release workflow 重新验证并将 tarball 附加到 GitHub Release。
 
 <a id="known-limitations"></a>
 ## 已知限制
