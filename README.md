@@ -4,7 +4,7 @@ description: "Excalidraw 画布工具：以 MCP 服务（stdio / Streamable HTTP
 
 # @reachforstar/excalidraw-tools
 
-[![CI](https://github.com/ReachForStar/excalidraw-tools-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ReachForStar/excalidraw-tools-mcp/actions/workflows/ci.yml)
+[![Test](https://github.com/ReachForStar/excalidraw-tools-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ReachForStar/excalidraw-tools-mcp/actions/workflows/ci.yml)
 
 简体中文
 
