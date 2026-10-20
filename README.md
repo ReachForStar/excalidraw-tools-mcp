@@ -4,7 +4,7 @@ description: "Excalidraw 画布工具：以 MCP 服务（stdio / Streamable HTTP
 
 # @reachforstar/excalidraw-tools
 
-[English](README.md) | 中文
+简体中文
 
 ## 概述
 
@@ -19,6 +19,7 @@ description: "Excalidraw 画布工具：以 MCP 服务（stdio / Streamable HTTP
 
 - [安装](#install)
 - [作为 MCP 服务](#mcp)
+- [自托管与公网访问](#deployment)
 - [命令行选项](#cli)
 - [工具](#tools)
 - [场景文件](#scene-file)
@@ -28,20 +29,47 @@ description: "Excalidraw 画布工具：以 MCP 服务（stdio / Streamable HTTP
 - [导出](#export-limits)
 - [作为 cordis 插件](#plugin)
 - [安全](#security)
+- [故障排查](#troubleshooting)
 - [开发与测试](#dev)
 - [已知限制](#known-limitations)
+- [许可证](#license)
 
 -----
 
 <a id="install"></a>
 ## 安装
 
+### 从源码运行
+
 ```sh
 pnpm install
 pnpm run build
+node lib/mcp.js --version
 ```
 
-构建产物在 `lib/`，命令行入口为 `lib/mcp.js`。发布后可直接用 `npx -y @reachforstar/excalidraw-tools`；未发布时使用仓库内的绝对路径。
+构建产物在 `lib/`，命令行入口为 `lib/mcp.js`。
+
+### 全局安装
+
+```sh
+pnpm pack
+npm install -g ./reachforstar-excalidraw-tools-0.1.0.tgz
+excalidraw-mcp --version
+```
+
+npm 会把 `bin/excalidraw-mcp` 安装为指向 `lib/mcp.js` 的符号链接。当前入口会先解析真实路径再判断是否为主模块，因此直接执行 `excalidraw-mcp` 可以正常启动。
+
+### 使用 npx
+
+包发布到 npm 后可以直接运行：
+
+```sh
+npx -y @reachforstar/excalidraw-tools --workspace /abs/path/to/project
+```
+
+当前版本未发布到 npm，请使用源码或本地 tarball。
+
+### 浏览器要求
 
 导出 SVG、PNG 与截图由本机 Chrome/Chromium 渲染，`.excalidraw` 导出与导入不需要浏览器。安装后若报错提示找不到浏览器，请安装 Google Chrome，或用 `--chrome` / `EXCALIDRAW_CHROME` 指定可执行文件路径。
 
@@ -128,6 +156,59 @@ claude mcp add --transport http excalidraw http://127.0.0.1:7801/mcp -H "Authori
 ```
 
 一个进程可以服务多个工作区：`--workspace` 可重复传入（环境变量用操作系统的路径分隔符连接，Linux/macOS 为 `:`，Windows 为 `;`），每个工具调用用 `workspace` 参数指定目标工作区。省略 `workspace` 时使用第一个根目录。
+
+<a id="deployment"></a>
+## 自托管与公网访问
+
+生产环境建议只监听回环地址，由 Nginx、Caddy 等反向代理终止 TLS，并只转发 `/mcp`。生成随机 token 后启动：
+
+```sh
+export EXCALIDRAW_MCP_TOKEN="$(openssl rand -hex 32)"
+excalidraw-mcp --http --host 127.0.0.1 --port 7801 \
+  --workspace /srv/excalidraw/workspace \
+  --token "$EXCALIDRAW_MCP_TOKEN"
+```
+
+Nginx 只暴露 MCP 端点：
+
+```nginx
+location = /mcp {
+    proxy_pass http://127.0.0.1:7801;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 180s;
+    proxy_send_timeout 180s;
+    client_max_body_size 64m;
+}
+```
+
+systemd 单元示例：
+
+```ini
+[Service]
+User=excalidraw
+Group=excalidraw
+WorkingDirectory=/srv/excalidraw
+EnvironmentFile=/etc/excalidraw-mcp.env
+ExecStart=/usr/local/bin/excalidraw-mcp --http --host 127.0.0.1 --port 7801 --workspace /srv/excalidraw/workspace
+Restart=on-failure
+RestartSec=3
+```
+
+`ExecStart` 的路径按实际安装位置调整；用 `npm install --global --prefix` 安装时，命令通常位于 `<prefix>/bin/excalidraw-mcp`。
+
+部署要点：
+
+- 公网必须使用 HTTPS。明文 HTTP 会暴露 Bearer token。
+- 只放行 `POST /mcp`；直接 `GET /mcp` 返回 405 是正常行为。
+- 服务用户需要工作区读写权限，以及可执行的 Chrome/Chromium。
+- 证书可使用任意 ACME 客户端。若服务器网络环境使 HTTP-01 不可达，改用 DNS-01。
+- 大图导出可能持续数十秒；反向代理的读超时不要低于 180 秒。
 
 <a id="cli"></a>
 ## 命令行选项
@@ -283,16 +364,31 @@ claude mcp add --transport http excalidraw http://127.0.0.1:7801/mcp -H "Authori
 - HTTP 默认绑定回环地址；跨网络暴露时设置 `--token` 并在前面加 TLS 反向代理。
 - 不写入密钥；`--token` 建议通过环境变量传入，避免进入 shell 历史。
 
+<a id="troubleshooting"></a>
+## 故障排查
+
+| 现象 | 处理 |
+| --- | --- |
+| HTTP 返回 401 | 检查请求头是否为 `Authorization: Bearer <token>`，并确认 token 与 `EXCALIDRAW_MCP_TOKEN` 一致；修改环境变量后重启服务 |
+| HTTP 返回 405 | `/mcp` 只接受 `POST`；`GET` 返回 405 属正常，响应头会带 `Allow: POST` |
+| HTTP 返回 404 | 路径必须是 `/mcp`，不要加尾斜杠；检查反向代理是否使用 `location = /mcp` |
+| HTTP 返回 413 | 请求体超过反向代理限制；调大 `client_max_body_size`，大场景建议 64 MB 或更高 |
+| 导出超时或 504 | Chrome 首次启动较慢；把 `proxy_read_timeout` 调到 180 秒以上，并检查内存是否充足 |
+| 提示找不到浏览器 | 安装 Google Chrome，或用 `--chrome` / `EXCALIDRAW_CHROME` 指定可执行文件 |
+| 服务用户启动 Chrome 报沙箱错误 | 确认 `chrome-sandbox` 权限为 4755，或允许非特权用户命名空间；不建议长期关闭沙箱 |
+| 执行 `excalidraw-mcp` 无输出且退出码 0 | 当前构建已修复符号链接入口；若仍出现，确认安装的是最新 tarball，并用 `readlink -f "$(command -v excalidraw-mcp)"` 检查是否指向 `lib/mcp.js` |
+| 工作区路径被拒绝 | 工作区必须已存在，且位于启动时传入的 `--workspace` 根目录内 |
+
 <a id="dev"></a>
 ## 开发与测试
 
 ```sh
 pnpm run typecheck   # 类型检查
-pnpm test            # vitest：cordis 工具、MCP 内存传输、HTTP 传输、CLI 参数
+pnpm test            # vitest：cordis 工具、MCP 内存传输、HTTP 传输、CLI 与入口识别
 pnpm run build
 ```
 
-`tests/` 覆盖工具注册、场景读写、多图形增删改查、元素增删改查、布局、图片插入、形状展开、路径越界、截图、HTTP 鉴权与 CLI 解析。
+`tests/` 覆盖工具注册、场景读写、多图形增删改查、元素增删改查、布局、图片插入、形状展开、路径越界、截图、HTTP 鉴权、CLI 参数与符号链接入口识别，共 52 项。
 
 <a id="known-limitations"></a>
 ## 已知限制
@@ -301,3 +397,8 @@ pnpm run build
 - **预览近似**：`excalidraw_draw` 返回的 `previewSvg` 为平直渲染，不还原手绘纹理与自动换行，仅用于快速确认形状。
 - **无画布同步**：工具直接读写场景文件，运行中的浏览器画布需轮询或重新加载才能看到改动。
 - **HTTP 无会话**：每个请求独立，服务端不保存客户端状态；需要会话级状态的能力不适用。
+
+<a id="license"></a>
+## 许可证
+
+MIT

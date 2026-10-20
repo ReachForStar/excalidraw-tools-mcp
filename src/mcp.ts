@@ -17,9 +17,10 @@
  * @module excalidraw-mcp/cli
  */
 
+import { realpathSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { delimiter, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SCENE_RELATIVE, workspaceScope, type WorkspaceScope } from './scene.js'
 import { startHttpServer } from './mcp/http.js'
@@ -269,8 +270,20 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   await running.close()
 }
 
-const entry = process.argv[1]
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+/**
+ * True when `entry` resolves to this module. npm installs the bin as a symlink,
+ * so comparing raw paths would skip main().
+ */
+export function isEntryPoint(entry: string | undefined, moduleUrl: string = import.meta.url): boolean {
+  if (entry === undefined) return false
+  try {
+    return realpathSync(entry) === fileURLToPath(moduleUrl)
+  } catch {
+    return false
+  }
+}
+
+if (isEntryPoint(process.argv[1])) {
   main().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
     process.stderr.write(`excalidraw-mcp: ${message}\n`)

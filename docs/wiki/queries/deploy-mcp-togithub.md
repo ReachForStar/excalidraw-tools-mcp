@@ -40,12 +40,12 @@ User=excalidraw
 Group=excalidraw
 WorkingDirectory=/opt/excalidraw-tools
 EnvironmentFile=/etc/excalidraw-mcp.env
-ExecStart=/usr/bin/node /opt/excalidraw-tools/lib/node_modules/@reachforstar/excalidraw-tools/lib/mcp.js --http --host 127.0.0.1 --port 7801 --workspace /srv/excalidraw/workspace
+ExecStart=/usr/bin/node /opt/excalidraw-tools/bin/excalidraw-mcp --http --host 127.0.0.1 --port 7801 --workspace /srv/excalidraw/workspace
 Restart=on-failure
 RestartSec=3
 ```
 
-说明：包内 `bin/excalidraw-mcp` 是指向 `lib/mcp.js` 的符号链接。入口判断用 `process.argv[1]` 与 `import.meta.url` 比较，符号链接路径与真实路径不一致，直接执行 bin 会静默退出。因此 systemd 直接调用 `node lib/mcp.js`。该问题不影响远程端点，但会影响本地 `npx`/全局 bin 使用，待后续修复。
+说明：包内 `bin/excalidraw-mcp` 是指向 `lib/mcp.js` 的符号链接。入口判断先解析真实路径，再与 `import.meta.url` 比较，因此直接执行 bin 可以正常启动。systemd 使用 bin 入口，便于与本地 `npx`/全局安装保持一致。
 
 代理只转发 `/mcp`：
 
@@ -87,6 +87,7 @@ HTTP 站点把其他请求 301 到 HTTPS；`/.well-known/acme-challenge/` 保留
 | `excalidraw_read` | 读回 3 个元素，含 `description` |
 | `excalidraw_export` PNG | 成功，760×280，107108 字节 |
 | `excalidraw_screenshot` | 成功，380×140，40775 字节，返回 `image/png` |
+| 全局 bin `--version` | `@reachforstar/excalidraw-tools 0.1.0` |
 
 ## 客户端配置
 
@@ -119,7 +120,6 @@ certbot renew
 ## 遗留问题
 
 - 证书自动续期需要人工配合添加 TXT；可改为阿里云 DNS API 自动续期。
-- `bin/excalidraw-mcp` 符号链接入口静默退出，需修复入口路径判断（用 `realpath` 后再比较）。
 - 工作区保留了验证用文件：`mcp-smoke.png`、`mcp-smoke-shot.png` 与默认画布场景，可按需清理。
 - 服务器只有 1.6 GiB 内存，大图导出可能触发 swap；当前 4 GiB swap 可用。
 

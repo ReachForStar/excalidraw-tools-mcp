@@ -68,3 +68,9 @@
 - 验证通过：GET 405、无 token 401、18 个工具、draw/read/export/screenshot 均成功。
 - 记录遗留问题：bin 符号链接入口静默退出、证书续期需人工、工作区保留验证文件。
 - 新增 `queries/deploy-mcp-togithub.md`，更新 index 与实体页链接。
+
+## [2026-10-20] fix | 修复 bin 符号链接入口静默退出
+- 入口判断改为 `realpathSync(entry) === fileURLToPath(import.meta.url)`，兼容 npm 全局安装的 bin 符号链接。
+- 新增 `tests/mcp-entry.spec.ts`，覆盖符号链接、真实路径、缺失路径与无关路径；测试 52 项通过。
+- 重新打包部署到 `/opt/excalidraw-tools`；systemd 改用 `bin/excalidraw-mcp`，远程 `--version` 与工具调用验证通过。
+- 更新部署页与实体页，移除 bin 遗留问题。
