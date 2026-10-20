@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 12
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+          install-dependencies: true
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+        env:
+          EXCALIDRAW_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+
+      - name: Build
+        run: pnpm build
+
+      - name: Pack tarball
+        run: pnpm pack
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: excalidraw-tools-tgz
+          path: reachforstar-excalidraw-tools-*.tgz
+          if-no-files-found: error
