@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -8,10 +7,13 @@ import { createMcpServer } from '../src/mcp/server.ts'
 import { SCENE_RELATIVE, sceneTarget } from '../src/scene.ts'
 
 const workspaces: string[] = []
+// Project-local scratch root: tests must not write to the system temp directory.
+const TEST_ROOT = join(process.cwd(), 'tmp', 'tests')
 
 /** Fresh workspace directory, removed after each test. */
 async function workspace(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'excalidraw-mcp-'))
+  await mkdir(TEST_ROOT, { recursive: true })
+  const dir = await mkdtemp(join(TEST_ROOT, 'mcp-'))
   workspaces.push(dir)
   return dir
 }
