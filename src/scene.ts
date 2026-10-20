@@ -22,6 +22,8 @@ export const SCENE_RELATIVE = join(SCENE_DIRECTORY, 'scene.json')
 
 /** Default SVG export path inside a workspace. */
 export const DEFAULT_EXPORT_RELATIVE = join(SCENE_DIRECTORY, 'export.svg')
+/** Default destination for PNG exports. */
+export const DEFAULT_EXPORT_PNG_RELATIVE = join(SCENE_DIRECTORY, 'export.png')
 
 /** Cap for the full scene JSON echoed back to the caller (keeps context sane). */
 export const READ_FULL_JSON_MAX_BYTES = 128 * 1024
@@ -92,9 +94,17 @@ export interface DrawResult {
 export interface ExportResult {
   ok: true
   path: string
+  format: ExportFormat
   elementCount: number
   bytes: number
+  /** Pixel width of the exported image. */
+  width: number
+  /** Pixel height of the exported image. */
+  height: number
 }
+
+/** Output formats `exportScene` writes. */
+export type ExportFormat = 'svg' | 'png'
 
 /** A high-level shape description from the caller. */
 export interface DrawShape {
@@ -696,13 +706,20 @@ export function previewSvgOf(elements: readonly unknown[], appState: Record<stri
 }
 
 /** Parse a scene file body, returning the record and its elements/appState. */
-function splitScene(parsed: unknown): { elements: unknown[]; appState: Record<string, unknown> } {
+function splitScene(parsed: unknown): {
+  elements: unknown[]
+  appState: Record<string, unknown>
+  files: Record<string, unknown>
+} {
   const record = (typeof parsed === 'object' && parsed !== null) ? parsed as Record<string, unknown> : {}
   const elements = Array.isArray(record['elements']) ? record['elements'] : []
   const appState = (typeof record['appState'] === 'object' && record['appState'] !== null)
     ? record['appState'] as Record<string, unknown>
     : {}
-  return { elements, appState }
+  const files = (typeof record['files'] === 'object' && record['files'] !== null)
+    ? record['files'] as Record<string, unknown>
+    : {}
+  return { elements, appState, files }
 }
 
 /**
@@ -893,22 +910,37 @@ export function resolveExportPath(workspace: string, relPath: string): string {
 }
 
 /**
- * Export the target scene to an SVG file inside the workspace. Pure node-side
- * rendering, so no browser is needed.
+ * Export the target scene inside the workspace. Rendering runs through
+ * Excalidraw's own exporter in a local headless Chrome, so hand-drawn texture,
+ * embedded images, font subsetting and wrapped text match the web app; a
+ * browser is required, and a missing one is reported instead of degrading the
+ * output.
  * @param target - resolved scene target.
- * @param options - output path (workspace-relative) and background handling.
+ * @param options - format, output path (workspace-relative), PNG scale, and background handling.
  * @returns the export result.
  */
 export async function exportScene(
   target: SceneTarget,
-  options: { path?: string; transparent?: boolean } = {},
+  options: {
+    path?: string
+    transparent?: boolean
+    format?: ExportFormat
+    scale?: number
+  } = {},
 ): Promise<ExportResult> {
+  const format: ExportFormat = options.format ?? 'svg'
+  const scale = options.scale ?? 1
+  if (!Number.isFinite(scale) || scale < 0.5 || scale > 4) {
+    throw new Error('excalidraw_export: `scale` must be between 0.5 and 4')
+  }
   const relPath = options.path?.trim()
   // Validate the destination before touching the scene: a bad path is a caller
   // error regardless of whether a scene exists yet.
   const abs = resolveExportPath(
     target.workspace,
-    relPath !== undefined && relPath.length > 0 ? relPath : DEFAULT_EXPORT_RELATIVE,
+    relPath !== undefined && relPath.length > 0
+      ? relPath
+      : (format === 'png' ? DEFAULT_EXPORT_PNG_RELATIVE : DEFAULT_EXPORT_RELATIVE),
   )
   let text: string
   try {
@@ -922,10 +954,24 @@ export async function exportScene(
   } catch {
     throw new Error('excalidraw_export: scene file is corrupted (not valid JSON)')
   }
-  const { elements, appState } = splitScene(parsed)
-  const background = options.transparent === true ? null : backgroundOf(appState)
-  const svg = sceneToSvg(elements, background)
+  const { elements, appState, files } = splitScene(parsed)
+  const transparent = options.transparent === true
+  const background = transparent ? null : backgroundOf(appState)
+  // Loaded lazily so plugin users that never export do not pay for playwright.
+  const { renderScene } = await import('./render.js')
+  const rendered = await renderScene(
+    { elements, appState, ...(Object.keys(files).length > 0 ? { files } : {}) },
+    { format, scale, transparent, background },
+  )
   await mkdir(dirname(abs), { recursive: true })
-  await writeFile(abs, svg, 'utf8')
-  return { ok: true, path: abs, elementCount: elements.length, bytes: Buffer.byteLength(svg) }
+  await writeFile(abs, rendered.data)
+  return {
+    ok: true,
+    path: abs,
+    format,
+    elementCount: elements.length,
+    bytes: rendered.data.length,
+    width: rendered.width,
+    height: rendered.height,
+  }
 }

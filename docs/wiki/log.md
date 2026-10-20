@@ -37,3 +37,10 @@
 - 四个 MCP 工具新增可选 `workspace` 参数；`--workspace` 可重复，环境变量按操作系统路径分隔符拆分。
 - `--scene` 仅允许单工作区；工作区必须位于允许根目录内且已存在。
 - 新增多工作区与越界拒绝测试，共 32 项通过；版本 0.4.0。
+
+## [2026-10-20] feat | 导出改用 Excalidraw 官方渲染并支持 PNG
+- 新增 `src/render.ts`：探测本机 Chrome，无头启动，桥接页调用 `@excalidraw/utils` 的 `exportToSvg` / `exportToBlob`。
+- `excalidraw_export` 新增 `format`（svg/png）、`scale`（0.5–4），结果返回 `width` / `height`；默认 PNG 路径 `.agents/excalidraw/export.png`。
+- 命令行新增 `--chrome` / `EXCALIDRAW_CHROME`；找不到浏览器时导出报错，不回退近似渲染。
+- 渲染串行化并在服务关闭时释放浏览器；导出测试在无浏览器环境自动跳过，共 35 项通过。
+- 版本 0.5.0；新增决策页 `decisions/export-renderer.md`。

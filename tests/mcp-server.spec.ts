@@ -1,10 +1,15 @@
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createMcpServer } from '../src/mcp/server.ts'
+import { closeRenderer, findChrome } from '../src/render.ts'
 import { SCENE_RELATIVE, sceneTarget, workspaceScope } from '../src/scene.ts'
+
+// Export tests need a browser; the rest of the suite runs without one.
+const CHROME = await findChrome().catch(() => undefined)
+const withChrome = it.skipIf(CHROME === undefined)
 
 const workspaces: string[] = []
 // Project-local scratch root: tests must not write to the system temp directory.
@@ -38,6 +43,11 @@ afterEach(async () => {
   await Promise.all(workspaces.splice(0).map(dir => rm(dir, { recursive: true, force: true })))
 })
 
+// The headless browser is shared by every export; shut it down so vitest exits.
+afterAll(async () => {
+  await closeRenderer()
+})
+
 describe('excalidraw MCP tools', () => {
   it('lists the four scene tools with input schemas', async () => {
     const client = await connect(await workspace())
@@ -55,7 +65,7 @@ describe('excalidraw MCP tools', () => {
     await client.close()
   })
 
-  it('draws, reads back, and exports a scene', async () => {
+  it('draws and reads back a scene', async () => {
     const root = await workspace()
     const client = await connect(root)
 
@@ -77,12 +87,50 @@ describe('excalidraw MCP tools', () => {
     expect((read['summary'] as { elementCount: number }).elementCount).toBe(3)
     expect((read['summary'] as { byType: Record<string, number> }).byType).toEqual({ rectangle: 1, text: 1, arrow: 1 })
     expect(read['sceneJson']).toBeTypeOf('string')
+    await client.close()
+  })
+
+  withChrome('exports the scene as SVG through Excalidraw', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: {
+        elements: [
+          { type: 'rectangle', x: 10, y: 20, width: 120, height: 60 },
+          { type: 'text', x: 10, y: 90, width: 200, height: 30, text: 'hello mcp' },
+        ],
+      },
+    })
 
     const exported = payload(await client.callTool({ name: 'excalidraw_export', arguments: { path: 'out/board.svg' } }))
-    expect(exported['ok']).toBe(true)
+    expect(exported).toMatchObject({ ok: true, format: 'svg', elementCount: 2 })
+    expect(exported['width']).toBeGreaterThan(0)
     const svg = await readFile(join(root, 'out/board.svg'), 'utf8')
-    expect(svg).toContain('<svg')
+    // Excalidraw's own exporter marks its output and inlines fonts.
+    expect(svg).toContain('svg-source:excalidraw')
     expect(svg).toContain('hello mcp')
+    await client.close()
+  })
+
+  withChrome('exports a scaled PNG through Excalidraw', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: { elements: [{ type: 'rectangle', x: 0, y: 0, width: 100, height: 50, backgroundColor: '#ffc9c9' }] },
+    })
+
+    const exported = payload(await client.callTool({
+      name: 'excalidraw_export',
+      arguments: { format: 'png', scale: 2 },
+    }))
+    expect(exported).toMatchObject({ ok: true, format: 'png' })
+    expect(exported['path']).toBe(join(root, '.agents', 'excalidraw', 'export.png'))
+    const png = await readFile(String(exported['path']))
+    expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+    expect(png.readUInt32BE(16)).toBe(exported['width'])
+    expect(png.readUInt32BE(20)).toBe(exported['height'])
     await client.close()
   })
 
@@ -121,11 +169,12 @@ describe('excalidraw MCP tools', () => {
     expect(label.containerId).toBe(container.id)
     expect(container.boundElements?.[0]?.id).toBe(label.id)
 
-    const exported = payload(await client.callTool({ name: 'excalidraw_export', arguments: {} }))
-    const svg = await readFile(String(exported['path']), 'utf8')
-    expect(svg).toContain('>start<')
-    // Opacity is stored 0-100 and emitted 0-1; a unit bug used to flatten every shape.
-    expect(svg).toContain('opacity="1"')
+    if (CHROME !== undefined) {
+      const exported = payload(await client.callTool({ name: 'excalidraw_export', arguments: {} }))
+      const svg = await readFile(String(exported['path']), 'utf8')
+      expect(svg).toContain('start')
+      expect(svg).toContain('svg-source:excalidraw')
+    }
     await client.close()
   })
 
@@ -167,8 +216,10 @@ describe('excalidraw MCP tools', () => {
       name: 'excalidraw_draw',
       arguments: { elements: [{ type: 'ellipse', x: 0, y: 0, width: 20, height: 20 }] },
     })
-    const exported = payload(await client.callTool({ name: 'excalidraw_export', arguments: {} }))
-    expect(exported['path']).toBe(join(root, '.agents', 'excalidraw', 'export.svg'))
+    if (CHROME !== undefined) {
+      const exported = payload(await client.callTool({ name: 'excalidraw_export', arguments: {} }))
+      expect(exported['path']).toBe(join(root, '.agents', 'excalidraw', 'export.svg'))
+    }
     expect(JSON.parse(await readFile(join(root, SCENE_RELATIVE), 'utf8'))).toHaveProperty('elements')
     await client.close()
   })

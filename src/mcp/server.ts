@@ -20,8 +20,9 @@ const INSTRUCTIONS =
   'Excalidraw scene tools. `excalidraw_draw` is the everyday path: describe shapes at a '
   + 'high level and the server fills the rendering fields. `excalidraw_read` inspects the '
   + 'canvas, `excalidraw_write` replaces the whole scene, and `excalidraw_export` renders '
-  + 'an SVG file inside the workspace. Every tool takes an optional `workspace` argument: '
-  + 'one server serves several workspaces, and the argument selects which one.'
+  + 'an SVG or PNG inside the workspace through Excalidraw\'s own exporter (needs Chrome). '
+  + 'Every tool takes an optional `workspace` argument: one server serves several '
+  + 'workspaces, and the argument selects which one.'
 
 /**
  * Create an MCP server exposing the scene tools.
