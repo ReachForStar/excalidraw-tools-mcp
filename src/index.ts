@@ -13,7 +13,6 @@
  * @module @reachforstar/dsh-tool-excalidraw-copy
  */
 
-import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
@@ -21,7 +20,7 @@ import type { Workspace } from '@deepseek-ai/dsh-workspace'
 // Type-only: pulls the tools registry Context merge (ctx.tools).
 import type {} from '@deepseek-ai/dsh-tools'
 import {
-  DRAW_MAX_ELEMENTS,
+  DEFAULT_EXPORT_RELATIVE,
   drawScene,
   exportScene,
   readScene,
@@ -29,7 +28,13 @@ import {
   writeScene,
 } from './scene.js'
 
-export { SCENE_RELATIVE, sanitizeScene, sceneToSvg } from './scene.js'
+export {
+  DEFAULT_EXPORT_RELATIVE,
+  DRAW_MAX_ELEMENTS,
+  SCENE_RELATIVE,
+  sanitizeScene,
+  sceneToSvg,
+} from './scene.js'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-excalidraw-copy'
@@ -250,14 +255,14 @@ export function apply(ctx: Context): void {
           'Export the current workspace\'s Excalidraw canvas to an SVG image file '
           + 'in the workspace (pure node-side rendering — no browser needed). Reads '
           + 'the same scene the canvas tab shows and writes a vector SVG at '
-          + '`<workspace>/<path>` (default `.dsh/excalidraw/export.svg`). Use it to '
+          + '`<workspace>/<path>` (default `.agents/excalidraw/export.svg`). Use it to '
           + 'persist a diagram the model drew so it can be viewed, committed, or '
           + 'converted elsewhere. The SVG uses flat fills/strokes (no hand-drawn '
           + 'texture); text keeps its content and font size.',
       parameters: {
         path: {
           type: 'string',
-          description: 'Workspace-relative output path (e.g. "docs/flow.svg"); default ".dsh/excalidraw/export.svg".',
+          description: 'Workspace-relative output path (e.g. "docs/flow.svg"); default ".agents/excalidraw/export.svg".',
         },
         transparent: {
           type: 'boolean',
@@ -294,15 +299,12 @@ export function apply(ctx: Context): void {
         card: 'generic',
         title: 'Export Excalidraw canvas',
         kind: 'other',
-        rawInput: `path: ${(args as { path?: string }).path ?? join('.dsh', 'excalidraw', 'export.svg')}`,
+        rawInput: `path: ${(args as { path?: string }).path ?? DEFAULT_EXPORT_RELATIVE}`,
       }),
     }))
     return () => { disposeRead(); disposeWrite(); disposeDraw(); disposeExport() }
   }, 'tool-excalidraw: scene tools')
 }
-
-/** Draw cap re-exported for hosts that echo tool limits in prompts. */
-export { DRAW_MAX_ELEMENTS }
 
 /** JsonValue re-export kept for consumers that typed against the old module. */
 export type { JsonValue }

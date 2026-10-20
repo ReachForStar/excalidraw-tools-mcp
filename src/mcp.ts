@@ -6,7 +6,7 @@
  * Configuration comes from flags or environment variables so the same binary
  * works for one-shot `npx` runs and for long-lived HTTP deployments:
  *   --workspace / EXCALIDRAW_WORKSPACE  workspace root that bounds exports
- *   --scene / EXCALIDRAW_SCENE          scene file (default `.dsh/excalidraw/scene.json`)
+ *   --scene / EXCALIDRAW_SCENE          scene file (default `.agents/excalidraw/scene.json`)
  *   --transport http | --http           switch to Streamable HTTP
  *   --host / EXCALIDRAW_MCP_HOST        bind address (default 127.0.0.1)
  *   --port / EXCALIDRAW_MCP_PORT        bind port (default 7801, 0 picks a free port)

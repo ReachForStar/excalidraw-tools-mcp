@@ -155,4 +155,46 @@ describe('excalidraw MCP tools', () => {
     expect(text.toLowerCase()).toMatch(/invalid|required|height/)
     await client.close()
   })
+
+  it('stores the scene at .agents/excalidraw/scene.json', async () => {
+    const root = await workspace()
+    expect(SCENE_RELATIVE).toBe(join('.agents', 'excalidraw', 'scene.json'))
+    expect(sceneTarget(root).scenePath).toBe(join(root, '.agents', 'excalidraw', 'scene.json'))
+
+    const client = await connect(root)
+    await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: { elements: [{ type: 'ellipse', x: 0, y: 0, width: 20, height: 20 }] },
+    })
+    const exported = payload(await client.callTool({ name: 'excalidraw_export', arguments: {} }))
+    expect(exported['path']).toBe(join(root, '.agents', 'excalidraw', 'export.svg'))
+    expect(JSON.parse(await readFile(join(root, SCENE_RELATIVE), 'utf8'))).toHaveProperty('elements')
+    await client.close()
+  })
+
+  it('accepts a scene larger than the old write cap and omits the oversized echo', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    const scene = {
+      type: 'excalidraw',
+      elements: [{
+        id: 'big', type: 'rectangle', x: 0, y: 0, width: 10, height: 10,
+        // Unknown element fields survive sanitization, so this pads the file.
+        note: 'x'.repeat(1_300_000),
+      }],
+      appState: {},
+    }
+    const written = await client.callTool({
+      name: 'excalidraw_write',
+      arguments: { scene: JSON.stringify(scene) },
+    })
+    expect(written.isError).toBeFalsy()
+    expect(payload(written)).toMatchObject({ ok: true, elementCount: 1 })
+    expect((await readFile(join(root, SCENE_RELATIVE), 'utf8')).length).toBeGreaterThan(1_000_000)
+
+    const read = payload(await client.callTool({ name: 'excalidraw_read', arguments: {} }))
+    expect(read['sceneJson']).toBeUndefined()
+    expect((read['summary'] as { elementCount: number }).elementCount).toBe(1)
+    await client.close()
+  })
 })

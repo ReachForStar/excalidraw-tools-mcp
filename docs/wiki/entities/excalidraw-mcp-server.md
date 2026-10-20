@@ -33,7 +33,8 @@ MCP 工具：`excalidraw_read`、`excalidraw_write`、`excalidraw_draw`、`excal
 
 - 成功结果：单个文本块，内容为 JSON 文档。
 - 业务失败：`isError: true`，文本块为错误原因。
-- 场景默认路径 `<workspace>/.dsh/excalidraw/scene.json`，可用 `--scene` 覆盖。
+- 场景固定路径 `<workspace>/.agents/excalidraw/scene.json`，可用 `--scene` 覆盖；导出默认写到 `.agents/excalidraw/export.svg`。
+- 场景文件大小无上限：读写均不按体积拒绝；仅 `excalidraw_read` 在超过 128 KB 时省略 `sceneJson` 回显。
 
 命令行：`--workspace`、`--scene`、`--http`、`--transport`、`--host`、`--port`、`--token`、`--help`、`--version`；环境变量 `EXCALIDRAW_WORKSPACE`、`EXCALIDRAW_SCENE`、`EXCALIDRAW_MCP_HOST`、`EXCALIDRAW_MCP_PORT`、`EXCALIDRAW_MCP_TOKEN`。
 
@@ -47,6 +48,7 @@ MCP 工具：`excalidraw_read`、`excalidraw_write`、`excalidraw_draw`、`excal
 
 - 0.2.1-rc.2：仅 cordis 插件，场景逻辑与工具注册混在 `src/index.ts`。
 - 0.3.0：抽出 `src/scene.ts`；新增 MCP 服务（stdio + Streamable HTTP）；新增命令入口与 `bin`；修复 SVG 导出透明度单位错误；容器形状带 `text` 时生成绑定文本元素。
+- 0.3.1：场景路径由 `.dsh/excalidraw/scene.json` 改为固定的 `.agents/excalidraw/scene.json`（同工作区所有 agent 共用）；移除写入 1 MB 上限，场景文件大小不设限，读回显仍以 128 KB 为界。
 
 测试覆盖：`tests/excalidraw-tools.spec.ts`（插件）、`tests/mcp-server.spec.ts`（内存传输）、`tests/mcp-http.spec.ts`（HTTP 与鉴权）、`tests/mcp-cli.spec.ts`（参数解析）。
 

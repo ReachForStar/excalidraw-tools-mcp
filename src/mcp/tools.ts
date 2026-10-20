@@ -133,10 +133,10 @@ export function registerSceneTools(server: McpServer, target: SceneTarget): void
       description:
           'Export the Excalidraw canvas to an SVG file inside the workspace (pure node-side '
           + 'rendering — no browser needed). Writes `<workspace>/<path>` (default '
-          + '`.dsh/excalidraw/export.svg`). The SVG uses flat fills/strokes (no hand-drawn '
+          + '`.agents/excalidraw/export.svg`). The SVG uses flat fills/strokes (no hand-drawn '
           + 'texture); text keeps its content and font size.',
       inputSchema: {
-        path: z.string().optional().describe('Workspace-relative output path (e.g. "docs/flow.svg"); default ".dsh/excalidraw/export.svg".'),
+        path: z.string().optional().describe('Workspace-relative output path (e.g. "docs/flow.svg"); default ".agents/excalidraw/export.svg".'),
         transparent: z.boolean().optional().describe('When true, the SVG has a transparent background; default uses the canvas background color.'),
       },
       annotations: { openWorldHint: false },

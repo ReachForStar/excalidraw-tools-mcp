@@ -130,7 +130,7 @@ claude mcp add --transport http excalidraw http://127.0.0.1:7801/mcp -H "Authori
 | 选项 | 环境变量 | 默认值 | 说明 |
 |---|---|---|---|
 | `-w, --workspace <dir>` | `EXCALIDRAW_WORKSPACE` | 当前目录 | 工作区根目录，导出路径的边界 |
-| `--scene <path>` | `EXCALIDRAW_SCENE` | `.dsh/excalidraw/scene.json` | 场景文件，绝对路径或工作区相对路径 |
+| `--scene <path>` | `EXCALIDRAW_SCENE` | `.agents/excalidraw/scene.json` | 场景文件，绝对路径或工作区相对路径 |
 | `--http` | — | 关闭 | 使用 Streamable HTTP 而非 stdio |
 | `--transport <stdio\|http>` | — | `stdio` | 传输方式 |
 | `--host <host>` | `EXCALIDRAW_MCP_HOST` | `127.0.0.1` | HTTP 监听地址 |
@@ -164,14 +164,14 @@ claude mcp add --transport http excalidraw http://127.0.0.1:7801/mcp -H "Authori
 <a id="scene-file"></a>
 ## 场景文件
 
-场景对象是 Excalidraw 持久化的结构：`{ elements, appState, files? }`。默认路径为 `<workspace>/.dsh/excalidraw/scene.json`；用 `--scene` 可以指向任意 `.excalidraw` 文件。若同一部署还运行 `@reachforstar/dsh-client-ui-polish` 的 Web 画布标签页，该标签页通过 `/scene` 路由渲染同一文件。
+场景对象是 Excalidraw 持久化的结构：`{ elements, appState, files? }`。固定路径为 `<workspace>/.agents/excalidraw/scene.json`，同工作区的所有 agent 共用一个画布；用 `--scene` 可以指向任意 `.excalidraw` 文件。导出默认写到 `<workspace>/.agents/excalidraw/export.svg`。
 
-工具执行以下边界：
+场景文件大小不设上限：`excalidraw_write` 与 `excalidraw_draw` 按文件实际大小读写，不因体积拒绝。工具执行以下边界：
 
 | 边界 | 值 |
 |---|---|
-| `excalidraw_read` 完整 JSON 回显上限 | 128 KB |
-| `excalidraw_write` 场景大小上限 | 1 MB |
+| `excalidraw_write` / `excalidraw_draw` 场景大小 | 无上限 |
+| `excalidraw_read` 完整 JSON 回显上限 | 128 KB（超出时省略 `sceneJson`，摘要与元素列表照常返回） |
 | `excalidraw_draw` 每次调用形状数 | 256 |
 | 返回的预览 SVG 上限 | 64 KB |
 | 导出路径越界 | 拒绝（`..`、前导 `/`、反斜杠、解析后落在工作区外） |
