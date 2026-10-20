@@ -5,8 +5,9 @@
  *
  * A scene is the object Excalidraw persists (`{ elements, appState, files? }`).
  * Every agent reads and writes the same workspace file
- * (`<workspace>/.agents/excalidraw/scene.json`), and a caller-supplied export
- * path can never leave the workspace.
+ * (`<workspace>/.agents/excalidraw/scene.json`), scenes can be exported to and
+ * imported from native `.excalidraw` files, and a caller-supplied path can
+ * never leave the workspace.
  * @module excalidraw-mcp/scene
  */
 
@@ -24,6 +25,13 @@ export const SCENE_RELATIVE = join(SCENE_DIRECTORY, 'scene.json')
 export const DEFAULT_EXPORT_RELATIVE = join(SCENE_DIRECTORY, 'export.svg')
 /** Default destination for PNG exports. */
 export const DEFAULT_EXPORT_PNG_RELATIVE = join(SCENE_DIRECTORY, 'export.png')
+/** Default destination for native Excalidraw file exports. */
+export const DEFAULT_EXPORT_FILE_RELATIVE = join(SCENE_DIRECTORY, 'export.excalidraw')
+
+/** Version of the native Excalidraw file format written by `exportScene`. */
+export const EXCALIDRAW_FILE_VERSION = 2
+/** `source` field of exported `.excalidraw` files. */
+export const EXCALIDRAW_FILE_SOURCE = 'https://github.com/ReachForStar/excalidraw-tools'
 
 /** Cap for the full scene JSON echoed back to the caller (keeps context sane). */
 export const READ_FULL_JSON_MAX_BYTES = 128 * 1024
@@ -97,14 +105,26 @@ export interface ExportResult {
   format: ExportFormat
   elementCount: number
   bytes: number
-  /** Pixel width of the exported image. */
-  width: number
-  /** Pixel height of the exported image. */
-  height: number
+  /** Pixel width of the exported image; absent for `excalidraw` files. */
+  width?: number
+  /** Pixel height of the exported image; absent for `excalidraw` files. */
+  height?: number
 }
 
 /** Output formats `exportScene` writes. */
-export type ExportFormat = 'svg' | 'png'
+export type ExportFormat = 'svg' | 'png' | 'excalidraw'
+
+/** Result of `importScene`. */
+export interface ImportResult {
+  ok: true
+  cwd: string
+  /** Absolute path of the imported file. */
+  path: string
+  elementCount: number
+  /** Size of the imported file in bytes. */
+  bytes: number
+  previewSvg?: string
+}
 
 /** A high-level shape description from the caller. */
 export interface DrawShape {
@@ -867,18 +887,27 @@ export async function drawScene(
   // Load the existing scene (tolerate missing/corrupt by starting fresh).
   let existing: unknown[] = []
   let appState: Record<string, unknown> = {}
+  let files: Record<string, unknown> = {}
   try {
     const scene = JSON.parse(await readFile(target.scenePath, 'utf8')) as Record<string, unknown>
     if (Array.isArray(scene['elements'])) existing = scene['elements'] as unknown[]
     if (typeof scene['appState'] === 'object' && scene['appState'] !== null) {
       appState = scene['appState'] as Record<string, unknown>
     }
+    // Embedded images live in `files`; dropping it on draw would orphan them.
+    if (typeof scene['files'] === 'object' && scene['files'] !== null) {
+      files = scene['files'] as Record<string, unknown>
+    }
   } catch {
     // Missing or unreadable scene → start from an empty canvas.
   }
   const elements = action === 'replace' ? built : [...existing, ...built]
   await mkdir(dirname(target.scenePath), { recursive: true })
-  await writeFile(target.scenePath, JSON.stringify({ elements, appState }), 'utf8')
+  await writeFile(
+    target.scenePath,
+    JSON.stringify({ elements, appState, ...(Object.keys(files).length > 0 ? { files } : {}) }),
+    'utf8',
+  )
   const result: DrawResult = {
     ok: true,
     cwd: target.workspace,
@@ -892,29 +921,66 @@ export async function drawScene(
 }
 
 /**
- * Reject a caller-supplied output path that could leave the workspace.
+ * Reject a caller-supplied file path that could leave the workspace.
  * @param workspace - workspace root.
  * @param relPath - the raw path from the caller.
- * @returns the absolute output path, guaranteed inside the workspace.
+ * @param tool - tool name used in the rejection message.
+ * @returns the absolute path, guaranteed inside the workspace.
  */
-export function resolveExportPath(workspace: string, relPath: string): string {
+export function resolveWorkspacePath(workspace: string, relPath: string, tool: string): string {
+  const reject = () => new Error(`${tool}: \`path\` must stay inside the workspace`)
   if (relPath.includes('..') || relPath.startsWith('/') || relPath.includes('\\')) {
-    throw new Error('excalidraw_export: `path` must stay inside the workspace')
+    throw reject()
   }
   const abs = resolve(workspace, relPath)
   const rel = relative(resolve(workspace), abs)
   if (rel.length === 0 || rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error('excalidraw_export: `path` must stay inside the workspace')
+    throw reject()
   }
   return abs
 }
 
 /**
- * Export the target scene inside the workspace. Rendering runs through
+ * Reject a caller-supplied export path that could leave the workspace.
+ * @param workspace - workspace root.
+ * @param relPath - the raw path from the caller.
+ * @returns the absolute output path, guaranteed inside the workspace.
+ */
+export function resolveExportPath(workspace: string, relPath: string): string {
+  return resolveWorkspacePath(workspace, relPath, 'excalidraw_export')
+}
+
+/**
+ * Build a native `.excalidraw` document. Scene state is reduced to the fields
+ * the web app persists (grid size, canvas background); elements are repaired on
+ * a copy so the stored scene is never mutated.
+ */
+function serializeExcalidrawFile(
+  elements: readonly unknown[],
+  appState: Record<string, unknown>,
+  files: Record<string, unknown>,
+): string {
+  const repaired = sanitizeScene({ elements: structuredClone(elements) }) as { elements: unknown[] }
+  const document: Record<string, unknown> = {
+    type: 'excalidraw',
+    version: EXCALIDRAW_FILE_VERSION,
+    source: EXCALIDRAW_FILE_SOURCE,
+    elements: repaired.elements,
+    appState: {
+      gridSize: appState['gridSize'] ?? null,
+      viewBackgroundColor: appState['viewBackgroundColor'] ?? 'transparent',
+    },
+  }
+  if (Object.keys(files).length > 0) document['files'] = files
+  return JSON.stringify(document)
+}
+
+/**
+ * Export the target scene inside the workspace. `svg` and `png` render through
  * Excalidraw's own exporter in a local headless Chrome, so hand-drawn texture,
  * embedded images, font subsetting and wrapped text match the web app; a
  * browser is required, and a missing one is reported instead of degrading the
- * output.
+ * output. `excalidraw` writes the native scene file and needs no browser.
  * @param target - resolved scene target.
  * @param options - format, output path (workspace-relative), PNG scale, and background handling.
  * @returns the export result.
@@ -934,13 +1000,14 @@ export async function exportScene(
     throw new Error('excalidraw_export: `scale` must be between 0.5 and 4')
   }
   const relPath = options.path?.trim()
+  const defaultPath = format === 'png'
+    ? DEFAULT_EXPORT_PNG_RELATIVE
+    : format === 'excalidraw' ? DEFAULT_EXPORT_FILE_RELATIVE : DEFAULT_EXPORT_RELATIVE
   // Validate the destination before touching the scene: a bad path is a caller
   // error regardless of whether a scene exists yet.
   const abs = resolveExportPath(
     target.workspace,
-    relPath !== undefined && relPath.length > 0
-      ? relPath
-      : (format === 'png' ? DEFAULT_EXPORT_PNG_RELATIVE : DEFAULT_EXPORT_RELATIVE),
+    relPath !== undefined && relPath.length > 0 ? relPath : defaultPath,
   )
   let text: string
   try {
@@ -955,6 +1022,18 @@ export async function exportScene(
     throw new Error('excalidraw_export: scene file is corrupted (not valid JSON)')
   }
   const { elements, appState, files } = splitScene(parsed)
+  if (format === 'excalidraw') {
+    const data = serializeExcalidrawFile(elements, appState, files)
+    await mkdir(dirname(abs), { recursive: true })
+    await writeFile(abs, data, 'utf8')
+    return {
+      ok: true,
+      path: abs,
+      format,
+      elementCount: elements.length,
+      bytes: Buffer.byteLength(data, 'utf8'),
+    }
+  }
   const transparent = options.transparent === true
   const background = transparent ? null : backgroundOf(appState)
   // Loaded lazily so plugin users that never export do not pay for playwright.
@@ -974,4 +1053,60 @@ export async function exportScene(
     width: rendered.width,
     height: rendered.height,
   }
+}
+
+/**
+ * Replace the target scene with an Excalidraw file from inside the workspace.
+ * Accepts the native `.excalidraw` document and the bare
+ * `{ elements, appState }` scene. Elements are repaired before saving and
+ * embedded `files` are kept so imported images still render. Excalidraw
+ * libraries are rejected: they are item collections, not scenes.
+ * @param target - resolved scene target.
+ * @param relPath - workspace-relative path of the file to import.
+ * @returns the import result with an optional preview SVG.
+ */
+export async function importScene(target: SceneTarget, relPath: string): Promise<ImportResult> {
+  const trimmed = relPath.trim()
+  if (trimmed.length === 0) {
+    throw new Error('excalidraw_import: `path` is required')
+  }
+  const abs = resolveWorkspacePath(target.workspace, trimmed, 'excalidraw_import')
+  let text: string
+  try {
+    text = await readFile(abs, 'utf8')
+  } catch {
+    throw new Error(`excalidraw_import: file not found: ${trimmed}`)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error(`excalidraw_import: ${trimmed} is not valid JSON`)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`excalidraw_import: ${trimmed} is not an Excalidraw scene`)
+  }
+  const record = parsed as Record<string, unknown>
+  if (record['type'] === 'excalidrawlib' || Array.isArray(record['libraryItems'])) {
+    throw new Error('excalidraw_import: Excalidraw libraries are not scenes; copy the items to a scene first')
+  }
+  if (!Array.isArray(record['elements'])) {
+    throw new Error(`excalidraw_import: ${trimmed} has no \`elements\` array`)
+  }
+  const { elements, appState, files } = splitScene(record)
+  const scene = sanitizeScene({ elements, appState }) as Record<string, unknown>
+  if (Object.keys(files).length > 0) scene['files'] = files
+  await mkdir(dirname(target.scenePath), { recursive: true })
+  await writeFile(target.scenePath, JSON.stringify(scene), 'utf8')
+  const imported = scene['elements'] as unknown[]
+  const result: ImportResult = {
+    ok: true,
+    cwd: target.workspace,
+    path: abs,
+    elementCount: imported.length,
+    bytes: Buffer.byteLength(text, 'utf8'),
+  }
+  const preview = previewSvgOf(imported, appState)
+  if (preview !== undefined) result.previewSvg = preview
+  return result
 }

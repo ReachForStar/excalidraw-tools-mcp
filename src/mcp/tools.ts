@@ -15,6 +15,7 @@ import {
   DRAWABLE_TYPES,
   drawScene,
   exportScene,
+  importScene,
   readScene,
   targetFor,
   writeScene,
@@ -61,7 +62,7 @@ const shapeSchema = z.object({
 })
 
 /**
- * Register the four scene tools on an MCP server bound to a workspace scope.
+ * Register the five scene tools on an MCP server bound to a workspace scope.
  * @param server - the MCP server to register on.
  * @param scope - workspace roots the tools may operate on.
  */
@@ -113,6 +114,31 @@ export function registerSceneTools(server: McpServer, scope: WorkspaceScope): vo
   )
 
   server.registerTool(
+    'excalidraw_import',
+    {
+      title: 'Import an Excalidraw file',
+      description:
+          'Replace the canvas scene of one workspace with an Excalidraw file from inside that '
+          + 'workspace. Reads `<workspace>/<path>` — a native `.excalidraw` document or any JSON '
+          + 'scene with `elements`/`appState` — repairs malformed elements, keeps embedded image '
+          + '`files`, and writes it as the workspace scene. Use it to load a diagram without '
+          + 'pasting its JSON. Excalidraw libraries are rejected.',
+      inputSchema: {
+        path: z.string().describe('Workspace-relative path of the file to import (e.g. "docs/flow.excalidraw").'),
+        workspace: workspaceSchema,
+      },
+      annotations: { destructiveHint: true, openWorldHint: false },
+    },
+    async ({ path, workspace }) => {
+      try {
+        return ok(await importScene(await targetFor(scope, workspace), path))
+      } catch (error) {
+        return fail(error)
+      }
+    },
+  )
+
+  server.registerTool(
     'excalidraw_draw',
     {
       title: 'Draw on Excalidraw canvas',
@@ -142,18 +168,19 @@ export function registerSceneTools(server: McpServer, scope: WorkspaceScope): vo
   server.registerTool(
     'excalidraw_export',
     {
-      title: 'Export Excalidraw scene to SVG or PNG',
+      title: 'Export Excalidraw scene to SVG, PNG or .excalidraw',
       description:
-          'Export the canvas of one workspace to an SVG or PNG file inside that workspace. '
-          + 'Rendering uses Excalidraw\'s own export image pipeline in a local headless Chrome, '
-          + 'so hand-drawn texture, embedded images and wrapped text are preserved. Writes '
-          + '`<workspace>/<path>` (default `.agents/excalidraw/export.svg` or `export.png`). '
-          + 'Requires Chrome/Chromium on the host; the error says so when it is missing.',
+          'Export the canvas of one workspace to a file inside that workspace. `format: "svg"` '
+          + 'and `"png"` render through Excalidraw\'s own export pipeline in a local headless '
+          + 'Chrome, so hand-drawn texture, embedded images and wrapped text are preserved; they '
+          + 'need Chrome/Chromium on the host. `format: "excalidraw"` writes the native scene file '
+          + '(openable in the Excalidraw app) and needs no browser. Defaults: '
+          + '`.agents/excalidraw/export.svg`, `export.png` or `export.excalidraw`.',
       inputSchema: {
-        path: z.string().optional().describe('Workspace-relative output path (e.g. "docs/flow.png"); default ".agents/excalidraw/export.svg" or "export.png" for PNG.'),
-        format: z.enum(['svg', 'png']).optional().describe('Output format; default "svg".'),
-        scale: z.number().min(0.5).max(4).optional().describe('PNG pixel scale; default 1. Ignored for SVG.'),
-        transparent: z.boolean().optional().describe('When true, the image has a transparent background; default uses the canvas background color.'),
+        path: z.string().optional().describe('Workspace-relative output path (e.g. "docs/flow.png"); default depends on `format`.'),
+        format: z.enum(['svg', 'png', 'excalidraw']).optional().describe('Output format; default "svg".'),
+        scale: z.number().min(0.5).max(4).optional().describe('PNG pixel scale; default 1. Ignored for SVG and .excalidraw.'),
+        transparent: z.boolean().optional().describe('When true, the image has a transparent background; default uses the canvas background color. Ignored for .excalidraw.'),
         workspace: workspaceSchema,
       },
       annotations: { openWorldHint: false },

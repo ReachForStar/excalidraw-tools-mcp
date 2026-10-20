@@ -1,5 +1,5 @@
 /**
- * MCP server assembly: one server instance exposes the four scene tools over a
+ * MCP server assembly: one server instance exposes the five scene tools over a
  * workspace scope, so a single process can serve several workspaces. The server
  * is transport-agnostic, so the same factory serves stdio, Streamable HTTP, and
  * in-memory tests.
@@ -19,10 +19,11 @@ const pkg = require('../../package.json') as { name: string; version: string }
 const INSTRUCTIONS =
   'Excalidraw scene tools. `excalidraw_draw` is the everyday path: describe shapes at a '
   + 'high level and the server fills the rendering fields. `excalidraw_read` inspects the '
-  + 'canvas, `excalidraw_write` replaces the whole scene, and `excalidraw_export` renders '
-  + 'an SVG or PNG inside the workspace through Excalidraw\'s own exporter (needs Chrome). '
-  + 'Every tool takes an optional `workspace` argument: one server serves several '
-  + 'workspaces, and the argument selects which one.'
+  + 'canvas, `excalidraw_write` replaces the whole scene, `excalidraw_import` loads a '
+  + '`.excalidraw` file from the workspace, and `excalidraw_export` writes SVG, PNG or a '
+  + 'native `.excalidraw` file (images need Chrome). Every tool takes an optional '
+  + '`workspace` argument: one server serves several workspaces, and the argument selects '
+  + 'which one.'
 
 /**
  * Create an MCP server exposing the scene tools.

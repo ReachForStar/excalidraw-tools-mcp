@@ -44,3 +44,10 @@
 - 命令行新增 `--chrome` / `EXCALIDRAW_CHROME`；找不到浏览器时导出报错，不回退近似渲染。
 - 渲染串行化并在服务关闭时释放浏览器；导出测试在无浏览器环境自动跳过，共 35 项通过。
 - 版本 0.5.0；新增决策页 `decisions/export-renderer.md`。
+
+## [2026-10-20] feat | 新增 .excalidraw 导入与导出
+- `excalidraw_export` 新增 `format: "excalidraw"`，直接写原生场景文件 `.agents/excalidraw/export.excalidraw`，不需要浏览器；`appState` 仅保留 `gridSize` 与 `viewBackgroundColor`。
+- 新增 `excalidraw_import`：读取工作区内的 `.excalidraw` 或裸 `{elements, appState}` JSON，修复元素后整体替换场景，保留 `files` 中的嵌入图片；素材库被拒绝。
+- `excalidraw_draw` 读写时保留场景已有的 `files`，追加形状不再丢失嵌入图片。
+- 导出/导入共用 `resolveWorkspacePath` 做越界校验；MCP 与 cordis 插件同步新增第五个工具。
+- 测试增至 39 项（含原生文件往返、图片保留、错误分支）；版本 0.6.0。
