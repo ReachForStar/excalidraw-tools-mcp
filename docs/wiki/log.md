@@ -80,3 +80,9 @@
 - 新增 `.github/workflows/release.yml`：推送 `v*` tag 后重新验证，读取 `docs/releases/<tag>.md` 发布说明并上传 tarball 到 GitHub Release。
 - `develop` CI run `39434107935` 通过；README 增加 CI 徽章与 Release 下载说明。
 - 新增 `queries/ci-release.md`，更新 index。
+
+## [2026-10-20] chore | 发布 v0.1.0
+- CI 工作流显示名称改为 `Test`，push/PR 自动触发；Release 改为 `workflow_dispatch` 手动指定版本触发，不再监听 tag push。
+- `master` Test run `39435310828` 通过；Release run `39435517529` 创建 `v0.1.0`，发布说明与 tarball 已上传。
+- 发布说明文件约定为 `docs/releases/<version>.md`，当前为 `docs/releases/v0.1.0.md`。
+- 清理项目 `tmp/`、根目录临时 tarball 与远程部署临时文件。

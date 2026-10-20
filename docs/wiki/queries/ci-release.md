@@ -74,12 +74,13 @@ gh run watch <run-id> --exit-status
 gh release view v0.1.0
 ```
 
-Release 工作流会在当前提交上创建或更新 `v0.1.0` tag；不需要手动推送 tag。
+Release 工作流会在当前提交上创建或更新 `<version>` tag；不需要手动推送 tag。
 
 ## 验证记录
 
-- `develop` CI：run `39434107935`，52 项测试通过，tarball 已上传为 artifact。
-- `v0.1.0` Release：待推送 tag 后验证发布说明与 tarball。
+- `develop` Test：run `39435103720`，52 项测试通过，tarball 已上传为 artifact。
+- `master` Test：run `39435310828`，52 项测试通过。
+- `v0.1.0` Release：run `39435517529`，手动触发；发布说明与 `reachforstar-excalidraw-tools-0.1.0.tgz`（65539 字节）已上传，tag 指向 `f461b39`。
 - `ubuntu-latest` 当前会提示将在 2026-10-19 后迁移到 Ubuntu 26；升级前复核 Chrome 依赖参数。
 
 ## 相关
