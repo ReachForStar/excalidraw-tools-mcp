@@ -122,15 +122,15 @@ Claude Code：
 claude mcp add --transport http excalidraw http://127.0.0.1:7801/mcp -H "Authorization: Bearer <token>"
 ```
 
-一个进程只绑定一个场景目标。需要同时服务多个工作区时，按工作区各起一个进程（stdio 方式天然如此）。
+一个进程可以服务多个工作区：`--workspace` 可重复传入（环境变量用操作系统的路径分隔符连接，Linux/macOS 为 `:`，Windows 为 `;`），每个工具调用用 `workspace` 参数指定目标工作区。省略 `workspace` 时使用第一个根目录。
 
 <a id="cli"></a>
 ## 命令行选项
 
 | 选项 | 环境变量 | 默认值 | 说明 |
 |---|---|---|---|
-| `-w, --workspace <dir>` | `EXCALIDRAW_WORKSPACE` | 当前目录 | 工作区根目录，导出路径的边界 |
-| `--scene <path>` | `EXCALIDRAW_SCENE` | `.agents/excalidraw/scene.json` | 场景文件，绝对路径或工作区相对路径 |
+| `-w, --workspace <dir>` | `EXCALIDRAW_WORKSPACE` | 当前目录 | 工作区根目录，导出路径的边界；可重复传入 |
+| `--scene <path>` | `EXCALIDRAW_SCENE` | `.agents/excalidraw/scene.json` | 场景文件，绝对路径或工作区相对路径；仅单工作区可用 |
 | `--http` | — | 关闭 | 使用 Streamable HTTP 而非 stdio |
 | `--transport <stdio\|http>` | — | `stdio` | 传输方式 |
 | `--host <host>` | `EXCALIDRAW_MCP_HOST` | `127.0.0.1` | HTTP 监听地址 |
@@ -139,7 +139,7 @@ claude mcp add --transport http excalidraw http://127.0.0.1:7801/mcp -H "Authori
 | `-h, --help` | — | — | 帮助 |
 | `-v, --version` | — | — | 版本 |
 
-工作区不存在或参数非法时以退出码 2 结束，启动失败以 1 结束。
+工作区不存在或参数非法时以退出码 2 结束，启动失败以 1 结束。同时传入 `--scene` 与多个工作区会被拒绝，因为一个固定场景文件无法描述多个工作区。
 
 <a id="tools"></a>
 ## 工具
@@ -150,6 +150,8 @@ claude mcp add --transport http excalidraw http://127.0.0.1:7801/mcp -H "Authori
 | `excalidraw_write` | 用完整场景 JSON 字符串覆盖场景，写入前修复缺字段元素 |
 | `excalidraw_draw` | 用高层描述（`type`、位置、尺寸、可选 text/points/样式）添加或替换形状 |
 | `excalidraw_export` | 把场景渲染成工作区内的 SVG 文件 |
+
+四个工具都接受可选的 `workspace` 参数：工作区目录的绝对路径，或相对第一个根目录的路径。该目录必须位于已允许的根目录之内且已存在，否则调用以 `isError` 拒绝。
 
 `excalidraw_draw` 会补齐 Excalidraw 渲染所需的全部字段（seed、version、index、nonce），调用方无需手写内部元素字段。支持的 `type`：`rectangle`、`ellipse`、`diamond`、`text`、`arrow`、`line`。在 `rectangle`、`ellipse`、`diamond` 上设置 `text` 会生成居中的绑定文本元素，即带标签的方框。
 

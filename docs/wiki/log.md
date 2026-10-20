@@ -31,3 +31,9 @@
 ## [2026-10-20] chore | 包名改为 @reachforstar/excalidraw-tools
 - 包名由 `@reachforstar/dsh-tool-excalidraw` 改为 `@reachforstar/excalidraw-tools`，与仓库目录名一致。
 - cordis 插件名保持 `tool-excalidraw`，MCP 服务名 `excalidraw-mcp` 与 bin 名不变。
+
+## [2026-10-20] feat | 单进程支持多工作区
+- `WorkspaceScope`（根目录集合）替代单一场景目标；`targetFor(scope, workspace)` 解析并校验每次调用的工作区。
+- 四个 MCP 工具新增可选 `workspace` 参数；`--workspace` 可重复，环境变量按操作系统路径分隔符拆分。
+- `--scene` 仅允许单工作区；工作区必须位于允许根目录内且已存在。
+- 新增多工作区与越界拒绝测试，共 32 项通过；版本 0.4.0。

@@ -11,7 +11,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 /** Fixed scene directory shared by every agent in a workspace. */
@@ -130,6 +130,87 @@ export function sceneTarget(workspace: string, sceneOverride?: string): SceneTar
     return { workspace: root, scenePath: join(root, SCENE_RELATIVE) }
   }
   return { workspace: root, scenePath: isAbsolute(override) ? override : join(root, override) }
+}
+
+/**
+ * Workspaces one server may operate on. A single process serves many
+ * workspaces: each tool call names its target, and every target must lie inside
+ * one of these roots.
+ */
+export interface WorkspaceScope {
+  /** Absolute, de-duplicated workspace roots; the first one is the default. */
+  readonly roots: readonly string[]
+  /** Operator scene override, only meaningful with a single root. */
+  readonly scene?: string
+}
+
+/**
+ * Test whether a path is a root itself or lies inside it.
+ * @param root - absolute root directory.
+ * @param candidate - absolute path to test.
+ * @returns true when the path stays inside the root.
+ */
+export function isWithin(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate)
+  return rel.length === 0 || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+/**
+ * Build the workspace scope of a server.
+ * @param roots - operator-supplied workspace roots.
+ * @param scene - optional scene override; rejected when several roots exist,
+ * because one fixed scene file cannot describe several workspaces.
+ * @returns the normalized scope.
+ */
+export function workspaceScope(roots: readonly string[], scene?: string): WorkspaceScope {
+  if (roots.length === 0) throw new Error('at least one workspace root is required')
+  const normalized: string[] = []
+  for (const raw of roots) {
+    const root = resolve(raw)
+    if (!normalized.includes(root)) normalized.push(root)
+  }
+  const override = scene?.trim()
+  if (override === undefined || override.length === 0) return { roots: normalized }
+  if (normalized.length > 1) throw new Error('`scene` requires a single workspace root')
+  return { roots: normalized, scene: override }
+}
+
+/**
+ * Scene target of the default workspace (the first configured root).
+ * @param scope - server scope.
+ * @returns the resolved scene target.
+ */
+export function defaultTarget(scope: WorkspaceScope): SceneTarget {
+  return sceneTarget(scope.roots[0] as string, scope.scene)
+}
+
+/**
+ * Resolve the scene target a tool call asked for.
+ * @param scope - server scope.
+ * @param requested - workspace from the caller: absolute, or relative to the
+ * first root. Omitted means the default root.
+ * @returns the resolved scene target.
+ * @throws when the workspace is outside every root or is not an existing
+ * directory, so a model cannot reach arbitrary paths on the host.
+ */
+export async function targetFor(scope: WorkspaceScope, requested?: string): Promise<SceneTarget> {
+  const asked = requested?.trim()
+  if (asked === undefined || asked.length === 0) return defaultTarget(scope)
+  const primary = scope.roots[0] as string
+  const candidate = isAbsolute(asked) ? resolve(asked) : resolve(primary, asked)
+  // A relative `..` resolves outside the root; containment covers both forms.
+  if (!scope.roots.some(root => isWithin(root, candidate))) {
+    throw new Error(`workspace "${asked}" is outside the allowed roots: ${scope.roots.join(', ')}`)
+  }
+  let info: Awaited<ReturnType<typeof stat>>
+  try {
+    info = await stat(candidate)
+  } catch {
+    throw new Error(`workspace does not exist: ${candidate}`)
+  }
+  if (!info.isDirectory()) throw new Error(`workspace is not a directory: ${candidate}`)
+  // The explicit scene pins the configured root; another workspace keeps its own.
+  return sceneTarget(candidate, candidate === primary ? scope.scene : undefined)
 }
 
 /** Summarize a scene without dumping every element field. */

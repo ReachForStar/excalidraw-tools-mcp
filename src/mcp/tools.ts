@@ -1,8 +1,11 @@
 /**
- * MCP tool surface for an Excalidraw scene. Each tool maps one-to-one onto the
+ * MCP tool surface for Excalidraw scenes. Each tool maps one-to-one onto the
  * core scene operations and returns a JSON document as a text content block;
  * tool failures come back as `isError` results so a client can show the reason
  * without treating the call as a transport fault.
+ *
+ * Every tool accepts an optional `workspace`, which is how one process serves
+ * several workspaces: omitted means the server's default root.
  * @module excalidraw-mcp/tools
  */
 
@@ -13,8 +16,9 @@ import {
   drawScene,
   exportScene,
   readScene,
+  targetFor,
   writeScene,
-  type SceneTarget,
+  type WorkspaceScope,
 } from '../scene.js'
 
 /** Result shape a tool handler returns to the MCP layer. */
@@ -34,6 +38,12 @@ function fail(error: unknown): ToolResult {
   return { content: [{ type: 'text', text: message }], isError: true }
 }
 
+/** Workspace selector shared by every tool. */
+const workspaceSchema = z.string().optional().describe(
+  'Workspace directory to operate on: absolute, or relative to the server root. '
+  + 'Omit to use the default root. Must lie inside an allowed root.',
+)
+
 /** High-level shape description accepted by `excalidraw_draw`. */
 const shapeSchema = z.object({
   type: z.string().describe('One of rectangle/ellipse/diamond/text/arrow/line.'),
@@ -51,26 +61,27 @@ const shapeSchema = z.object({
 })
 
 /**
- * Register the four scene tools on an MCP server bound to one scene target.
+ * Register the four scene tools on an MCP server bound to a workspace scope.
  * @param server - the MCP server to register on.
- * @param target - workspace root and scene file the tools operate on.
+ * @param scope - workspace roots the tools may operate on.
  */
-export function registerSceneTools(server: McpServer, target: SceneTarget): void {
+export function registerSceneTools(server: McpServer, scope: WorkspaceScope): void {
   server.registerTool(
     'excalidraw_read',
     {
       title: 'Read Excalidraw scene',
       description:
-          'Read the Excalidraw canvas scene. Returns a summary (element counts by type, '
-          + 'text elements, theme), a compact `elements` list (id/type/x/y/width/height/text) '
-          + 'so you can reason about what is on the canvas, and the complete scene JSON in '
-          + '`sceneJson` when the file is small. Use `excalidraw_draw` to add shapes, or '
-          + '`excalidraw_write` to replace the scene.',
+          'Read the Excalidraw canvas scene of one workspace. Returns a summary (element '
+          + 'counts by type, text elements, theme), a compact `elements` list '
+          + '(id/type/x/y/width/height/text) so you can reason about what is on the canvas, '
+          + 'and the complete scene JSON in `sceneJson` when the file is small. Use '
+          + '`excalidraw_draw` to add shapes, or `excalidraw_write` to replace the scene.',
+      inputSchema: { workspace: workspaceSchema },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async () => {
+    async ({ workspace }) => {
       try {
-        return ok(await readScene(target))
+        return ok(await readScene(await targetFor(scope, workspace)))
       } catch (error) {
         return fail(error)
       }
@@ -82,18 +93,19 @@ export function registerSceneTools(server: McpServer, target: SceneTarget): void
     {
       title: 'Write Excalidraw scene',
       description:
-          'Overwrite the Excalidraw canvas scene from a complete scene JSON string — the '
-          + 'shape produced by `excalidraw_read`\'s `sceneJson`: an object with `elements` '
-          + 'and `appState`. Malformed elements are repaired before saving. A missing scene '
-          + 'file is created.',
+          'Overwrite the canvas scene of one workspace from a complete scene JSON string — '
+          + 'the shape produced by `excalidraw_read`\'s `sceneJson`: an object with '
+          + '`elements` and `appState`. Malformed elements are repaired before saving. A '
+          + 'missing scene file is created. Scene size is not capped.',
       inputSchema: {
         scene: z.string().describe('Complete Excalidraw scene JSON (object with `elements` array and `appState` object).'),
+        workspace: workspaceSchema,
       },
       annotations: { destructiveHint: true, openWorldHint: false },
     },
-    async ({ scene }) => {
+    async ({ scene, workspace }) => {
       try {
-        return ok(await writeScene(target, scene))
+        return ok(await writeScene(await targetFor(scope, workspace), scene))
       } catch (error) {
         return fail(error)
       }
@@ -105,21 +117,22 @@ export function registerSceneTools(server: McpServer, target: SceneTarget): void
     {
       title: 'Draw on Excalidraw canvas',
       description:
-          'Draw shapes on the Excalidraw canvas. Describe shapes at a high level — no '
-          + 'Excalidraw internals needed. Use it to draw diagrams, flowcharts, or to work a '
-          + 'problem on the canvas. `action: "append"` adds to the existing scene; '
+          'Draw shapes on the Excalidraw canvas of one workspace. Describe shapes at a high '
+          + 'level — no Excalidraw internals needed. Use it to draw diagrams, flowcharts, or '
+          + 'to work a problem on the canvas. `action: "append"` adds to the existing scene; '
           + '`action: "replace"` clears the canvas first. Setting `text` on a rectangle, '
           + 'ellipse, or diamond adds a centered label. Coordinates are in canvas pixels '
           + `(top-left origin); supported types: ${[...DRAWABLE_TYPES].join(', ')}.`,
       inputSchema: {
         elements: z.array(shapeSchema).min(1).max(256).describe('Shapes to draw.'),
         action: z.enum(['append', 'replace']).optional().describe('"append" (default) adds shapes; "replace" clears the canvas first.'),
+        workspace: workspaceSchema,
       },
       annotations: { destructiveHint: true, openWorldHint: false },
     },
-    async ({ elements, action }) => {
+    async ({ elements, action, workspace }) => {
       try {
-        return ok(await drawScene(target, elements, action))
+        return ok(await drawScene(await targetFor(scope, workspace), elements, action))
       } catch (error) {
         return fail(error)
       }
@@ -131,19 +144,20 @@ export function registerSceneTools(server: McpServer, target: SceneTarget): void
     {
       title: 'Export Excalidraw scene to SVG',
       description:
-          'Export the Excalidraw canvas to an SVG file inside the workspace (pure node-side '
-          + 'rendering — no browser needed). Writes `<workspace>/<path>` (default '
+          'Export the canvas of one workspace to an SVG file inside that workspace (pure '
+          + 'node-side rendering — no browser needed). Writes `<workspace>/<path>` (default '
           + '`.agents/excalidraw/export.svg`). The SVG uses flat fills/strokes (no hand-drawn '
           + 'texture); text keeps its content and font size.',
       inputSchema: {
         path: z.string().optional().describe('Workspace-relative output path (e.g. "docs/flow.svg"); default ".agents/excalidraw/export.svg".'),
         transparent: z.boolean().optional().describe('When true, the SVG has a transparent background; default uses the canvas background color.'),
+        workspace: workspaceSchema,
       },
       annotations: { openWorldHint: false },
     },
-    async ({ path, transparent }) => {
+    async ({ path, transparent, workspace }) => {
       try {
-        return ok(await exportScene(target, {
+        return ok(await exportScene(await targetFor(scope, workspace), {
           ...(path !== undefined ? { path } : {}),
           ...(transparent !== undefined ? { transparent } : {}),
         }))

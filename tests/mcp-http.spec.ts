@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { startHttpServer, type RunningHttpServer } from '../src/mcp/http.ts'
-import { sceneTarget } from '../src/scene.ts'
+import { workspaceScope } from '../src/scene.ts'
 
 const cleanups: (() => Promise<void>)[] = []
 // Project-local scratch root: tests must not write to the system temp directory.
@@ -17,7 +17,7 @@ afterEach(async () => {
 /** Start a server on a free port and register its teardown. */
 async function serve(root: string, token?: string): Promise<RunningHttpServer> {
   const running = await startHttpServer({
-    target: sceneTarget(root),
+    scope: workspaceScope([root]),
     host: '127.0.0.1',
     port: 0,
     ...(token !== undefined ? { token } : {}),

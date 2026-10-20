@@ -14,11 +14,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { createMcpServer } from './server.js'
-import type { SceneTarget } from '../scene.js'
+import type { WorkspaceScope } from '../scene.js'
 
 /** Options for {@link startHttpServer}. */
 export interface HttpServerOptions {
-  readonly target: SceneTarget
+  readonly scope: WorkspaceScope
   readonly host: string
   readonly port: number
   readonly token?: string
@@ -43,11 +43,11 @@ function sendJsonRpcError(res: ServerResponse, status: number, code: number, mes
 
 /**
  * Start the Streamable HTTP listener.
- * @param options - target scene, bind address, port (0 picks a free port), and optional bearer token.
+ * @param options - workspace scope, bind address, port (0 picks a free port), and optional bearer token.
  * @returns the reachable URL and a close function.
  */
 export async function startHttpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
-  const { target, host, port, token } = options
+  const { scope, host, port, token } = options
   const httpServer: Server = createServer((req, res) => { void handle(req, res) })
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -65,7 +65,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
       sendJsonRpcError(res, 401, -32600, 'Unauthorized')
       return
     }
-    const server = createMcpServer(target)
+    const server = createMcpServer(scope)
     // Omitted `sessionIdGenerator` selects stateless mode: the transport serves
     // exactly one request, hence a fresh server/transport pair per POST.
     const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true })

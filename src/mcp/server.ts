@@ -1,13 +1,14 @@
 /**
- * MCP server assembly: one server instance exposes the four scene tools bound
- * to a single scene target. The server is transport-agnostic, so the same
- * factory serves stdio, Streamable HTTP, and in-memory tests.
+ * MCP server assembly: one server instance exposes the four scene tools over a
+ * workspace scope, so a single process can serve several workspaces. The server
+ * is transport-agnostic, so the same factory serves stdio, Streamable HTTP, and
+ * in-memory tests.
  * @module excalidraw-mcp/server
  */
 
 import { createRequire } from 'node:module'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { SceneTarget } from '../scene.js'
+import type { WorkspaceScope } from '../scene.js'
 import { registerSceneTools } from './tools.js'
 
 const require = createRequire(import.meta.url)
@@ -19,19 +20,20 @@ const INSTRUCTIONS =
   'Excalidraw scene tools. `excalidraw_draw` is the everyday path: describe shapes at a '
   + 'high level and the server fills the rendering fields. `excalidraw_read` inspects the '
   + 'canvas, `excalidraw_write` replaces the whole scene, and `excalidraw_export` renders '
-  + 'an SVG file inside the workspace.'
+  + 'an SVG file inside the workspace. Every tool takes an optional `workspace` argument: '
+  + 'one server serves several workspaces, and the argument selects which one.'
 
 /**
  * Create an MCP server exposing the scene tools.
- * @param target - workspace root and scene file the tools operate on.
+ * @param scope - workspace roots the tools may operate on; the first is the default.
  * @returns a server ready to connect to a transport.
  */
-export function createMcpServer(target: SceneTarget): McpServer {
+export function createMcpServer(scope: WorkspaceScope): McpServer {
   const server = new McpServer(
     { name: 'excalidraw-mcp', version: pkg.version },
     { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
   )
-  registerSceneTools(server, target)
+  registerSceneTools(server, scope)
   return server
 }
 

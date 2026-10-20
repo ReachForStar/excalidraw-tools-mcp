@@ -1,3 +1,4 @@
+import { delimiter } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { UsageError, parseArgs } from '../src/mcp.ts'
 
@@ -6,20 +7,20 @@ describe('excalidraw-mcp CLI arguments', () => {
     const command = parseArgs([], {})
     expect(command).toEqual({
       kind: 'run',
-      options: { transport: 'stdio', workspace: process.cwd(), host: '127.0.0.1', port: 7801 },
+      options: { transport: 'stdio', workspaces: [process.cwd()], host: '127.0.0.1', port: 7801 },
     })
   })
 
   it('reads the workspace, scene, and HTTP settings from flags', () => {
     const command = parseArgs([
-      '--http', '--workspace', '/tmp/ws', '--scene', 'board.excalidraw',
+      '--http', '--workspace', '/workspace/one', '--scene', 'board.excalidraw',
       '--host', '0.0.0.0', '--port', '9000', '--token', 'abc',
     ], {})
     expect(command).toEqual({
       kind: 'run',
       options: {
         transport: 'http',
-        workspace: '/tmp/ws',
+        workspaces: ['/workspace/one'],
         scene: 'board.excalidraw',
         host: '0.0.0.0',
         port: 9000,
@@ -38,7 +39,18 @@ describe('excalidraw-mcp CLI arguments', () => {
     })
     expect(command).toMatchObject({
       kind: 'run',
-      options: { workspace: '/env/ws', scene: '/env/scene.json', port: 8123, host: '127.0.0.2', token: 'env-token' },
+      options: { workspaces: ['/env/ws'], scene: '/env/scene.json', port: 8123, host: '127.0.0.2', token: 'env-token' },
+    })
+  })
+
+  it('collects repeatable workspaces and splits the environment by path delimiter', () => {
+    expect(parseArgs(['-w', '/ws/a', '--workspace', '/ws/b'], {})).toMatchObject({
+      kind: 'run',
+      options: { workspaces: ['/ws/a', '/ws/b'] },
+    })
+    expect(parseArgs([], { EXCALIDRAW_WORKSPACE: ['/ws/a', '/ws/b'].join(delimiter) })).toMatchObject({
+      kind: 'run',
+      options: { workspaces: ['/ws/a', '/ws/b'] },
     })
   })
 
