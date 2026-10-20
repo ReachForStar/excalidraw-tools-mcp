@@ -4,10 +4,11 @@
  * framework imports here, so the MCP entry can run standalone.
  *
  * A scene is the object Excalidraw persists (`{ elements, appState, files? }`).
- * Every agent reads and writes the same workspace file
- * (`<workspace>/.agents/excalidraw/scene.json`), scenes can be exported to and
- * imported from native `.excalidraw` files, and a caller-supplied path can
- * never leave the workspace.
+ * The default drawing is the workspace file
+ * `<workspace>/.agents/excalidraw/scene.json`; named drawings live next to it
+ * under `drawings/<id>.json`. Scenes can be exported to and imported from
+ * native `.excalidraw` files, and a caller-supplied path can never leave the
+ * workspace.
  * @module excalidraw-mcp/scene
  */
 
@@ -18,8 +19,18 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 /** Fixed scene directory shared by every agent in a workspace. */
 export const SCENE_DIRECTORY = join('.agents', 'excalidraw')
 
-/** Relative scene file inside a workspace. */
+/** Relative scene file of the default drawing inside a workspace. */
 export const SCENE_RELATIVE = join(SCENE_DIRECTORY, 'scene.json')
+
+/** Directory holding named drawings (`<id>.json`). */
+export const DRAWINGS_DIRECTORY = join(SCENE_DIRECTORY, 'drawings')
+/** Directory holding native `.excalidraw` exports of named drawings. */
+export const EXPORT_DIRECTORY = join(SCENE_DIRECTORY, 'exports')
+/** Directory holding screenshots of named drawings. */
+export const SCREENSHOT_DIRECTORY = join(SCENE_DIRECTORY, 'screenshots')
+
+/** Identifier of the drawing backed by `scene.json`. */
+export const DEFAULT_DRAWING_ID = 'default'
 
 /** Default SVG export path inside a workspace. */
 export const DEFAULT_EXPORT_RELATIVE = join(SCENE_DIRECTORY, 'export.svg')
@@ -27,6 +38,8 @@ export const DEFAULT_EXPORT_RELATIVE = join(SCENE_DIRECTORY, 'export.svg')
 export const DEFAULT_EXPORT_PNG_RELATIVE = join(SCENE_DIRECTORY, 'export.png')
 /** Default destination for native Excalidraw file exports. */
 export const DEFAULT_EXPORT_FILE_RELATIVE = join(SCENE_DIRECTORY, 'export.excalidraw')
+/** Default screenshot path of the default drawing. */
+export const DEFAULT_SCREENSHOT_RELATIVE = join(SCENE_DIRECTORY, 'screenshot.png')
 
 /** Version of the native Excalidraw file format written by `exportScene`. */
 export const EXCALIDRAW_FILE_VERSION = 2
@@ -39,6 +52,10 @@ export const READ_FULL_JSON_MAX_BYTES = 128 * 1024
 export const DRAW_MAX_ELEMENTS = 256
 /** Upper bound on the preview SVG embedded in a tool result (64 KiB). */
 export const PREVIEW_SVG_MAX_BYTES = 64 * 1024
+/** Upper bound on the structured canvas description (64 KiB). */
+export const DESCRIPTION_MAX_BYTES = 64 * 1024
+/** Elements listed in a structured description before it is summarized. */
+export const DESCRIPTION_MAX_ELEMENTS = 300
 
 /** Lossless JSON value, structurally identical to the host's `JsonValue`. */
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
@@ -65,6 +82,8 @@ export const EMPTY_SUMMARY: SceneSummary = {
 export interface SceneTarget {
   readonly workspace: string
   readonly scenePath: string
+  /** Drawing identifier; `default` maps to `scene.json`. */
+  readonly drawing: string
 }
 
 /** Compact element entry returned by `readScene`. */
@@ -73,17 +92,52 @@ export type CompactElement = Record<string, JsonValue>
 /** Result of `readScene`. */
 export interface ReadResult {
   cwd: string
+  drawing: string
+  /** Absolute path of the scene file. */
+  path: string
   exists: boolean
   summary: SceneSummary
   elements: CompactElement[]
+  /** Structured text description of the visible canvas. */
+  description: string
+  /** Complete scene JSON when the file is small enough. */
   sceneJson?: string
   error?: string
+}
+
+/** Parsed scene parts shared by every scene operation. */
+export interface SceneParts {
+  elements: unknown[]
+  appState: Record<string, unknown>
+  files: Record<string, unknown>
+}
+
+/** Result of loading a scene file without failing on a missing or corrupt file. */
+export interface LoadedScene {
+  exists: boolean
+  /** File text when it exists; absent for a missing file. */
+  text?: string
+  parts: SceneParts
+  error?: string
+}
+
+/** Result of `screenshotScene`. */
+export interface ScreenshotResult {
+  ok: true
+  cwd: string
+  drawing: string
+  /** Absolute path of the written PNG. */
+  path: string
+  width: number
+  height: number
+  bytes: number
 }
 
 /** Result of a scene mutation that reports a preview. */
 export interface MutationResult {
   ok: true
   cwd: string
+  drawing: string
   elementCount: number
   previewSvg?: string
 }
@@ -92,6 +146,7 @@ export interface MutationResult {
 export interface DrawResult {
   ok: true
   cwd: string
+  drawing: string
   added: number
   totalElements: number
   skipped: number
@@ -102,6 +157,7 @@ export interface DrawResult {
 export interface ExportResult {
   ok: true
   path: string
+  drawing: string
   format: ExportFormat
   elementCount: number
   bytes: number
@@ -114,10 +170,40 @@ export interface ExportResult {
 /** Output formats `exportScene` writes. */
 export type ExportFormat = 'svg' | 'png' | 'excalidraw'
 
+/**
+ * Default export path of one drawing. The default drawing keeps the historical
+ * top-level names; named drawings use `exports/<id>.<ext>` so they never
+ * overwrite each other.
+ * @param format - output format.
+ * @param drawing - drawing id.
+ * @returns the workspace-relative path.
+ */
+export function defaultExportRelative(format: ExportFormat, drawing: string): string {
+  if (drawing === DEFAULT_DRAWING_ID) {
+    return format === 'png'
+      ? DEFAULT_EXPORT_PNG_RELATIVE
+      : format === 'excalidraw' ? DEFAULT_EXPORT_FILE_RELATIVE : DEFAULT_EXPORT_RELATIVE
+  }
+  const extension = format === 'excalidraw' ? 'excalidraw' : format
+  return join(EXPORT_DIRECTORY, `${drawing}.${extension}`)
+}
+
+/**
+ * Default screenshot path of one drawing.
+ * @param drawing - drawing id.
+ * @returns the workspace-relative PNG path.
+ */
+export function defaultScreenshotRelative(drawing: string): string {
+  return drawing === DEFAULT_DRAWING_ID
+    ? DEFAULT_SCREENSHOT_RELATIVE
+    : join(SCREENSHOT_DIRECTORY, `${drawing}.png`)
+}
+
 /** Result of `importScene`. */
 export interface ImportResult {
   ok: true
   cwd: string
+  drawing: string
   /** Absolute path of the imported file. */
   path: string
   elementCount: number
@@ -145,21 +231,57 @@ export interface DrawShape {
 /** Element types the high-level draw tool accepts. */
 export const DRAWABLE_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'text', 'arrow', 'line'])
 
+/** Shape of a drawing id: path-safe, 1-64 characters. */
+const DRAWING_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
+/** Windows device names cannot be used as file names even with an extension. */
+const WINDOWS_RESERVED = new Set([
+  'con', 'prn', 'aux', 'nul',
+  'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+  'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+])
+
 /**
- * Resolve the scene file for a workspace.
+ * Normalize a caller-supplied drawing id.
+ * @param raw - drawing id; omitted or empty means the default drawing.
+ * @returns a path-safe id.
+ * @throws when the id could escape the drawings directory or collide with a
+ * Windows device name.
+ */
+export function normalizeDrawingId(raw?: string): string {
+  const id = raw?.trim()
+  if (id === undefined || id.length === 0) return DEFAULT_DRAWING_ID
+  if (!DRAWING_ID_PATTERN.test(id) || WINDOWS_RESERVED.has(id.toLowerCase())) {
+    throw new Error(
+      `invalid drawing id "${id}": use 1-64 letters, digits, "-" or "_", starting with a letter or digit`,
+    )
+  }
+  return id
+}
+
+/**
+ * Resolve the scene file of one drawing in a workspace.
  * @param workspace - workspace root, absolute.
  * @param sceneOverride - optional scene path from the operator (absolute, or
  * relative to the workspace). Model input never reaches this parameter, so an
- * absolute override is safe here; the default stays inside the workspace.
- * @returns the workspace root and the absolute scene path.
+ * absolute override is safe here; it only applies to the default drawing.
+ * @param drawing - drawing id; omitted means the default drawing.
+ * @returns the workspace root, drawing id and absolute scene path.
  */
-export function sceneTarget(workspace: string, sceneOverride?: string): SceneTarget {
+export function sceneTarget(workspace: string, sceneOverride?: string, drawing?: string): SceneTarget {
   const root = resolve(workspace)
+  const id = normalizeDrawingId(drawing)
   const override = sceneOverride?.trim()
-  if (override === undefined || override.length === 0) {
-    return { workspace: root, scenePath: join(root, SCENE_RELATIVE) }
+  if (id === DEFAULT_DRAWING_ID) {
+    if (override !== undefined && override.length > 0) {
+      return {
+        workspace: root,
+        scenePath: isAbsolute(override) ? override : join(root, override),
+        drawing: id,
+      }
+    }
+    return { workspace: root, scenePath: join(root, SCENE_RELATIVE), drawing: id }
   }
-  return { workspace: root, scenePath: isAbsolute(override) ? override : join(root, override) }
+  return { workspace: root, scenePath: join(root, DRAWINGS_DIRECTORY, `${id}.json`), drawing: id }
 }
 
 /**
@@ -208,10 +330,11 @@ export function workspaceScope(roots: readonly string[], scene?: string): Worksp
 /**
  * Scene target of the default workspace (the first configured root).
  * @param scope - server scope.
+ * @param drawing - drawing id; omitted means the default drawing.
  * @returns the resolved scene target.
  */
-export function defaultTarget(scope: WorkspaceScope): SceneTarget {
-  return sceneTarget(scope.roots[0] as string, scope.scene)
+export function defaultTarget(scope: WorkspaceScope, drawing?: string): SceneTarget {
+  return sceneTarget(scope.roots[0] as string, scope.scene, drawing)
 }
 
 /**
@@ -219,13 +342,18 @@ export function defaultTarget(scope: WorkspaceScope): SceneTarget {
  * @param scope - server scope.
  * @param requested - workspace from the caller: absolute, or relative to the
  * first root. Omitted means the default root.
+ * @param drawing - drawing id; omitted means the default drawing.
  * @returns the resolved scene target.
  * @throws when the workspace is outside every root or is not an existing
  * directory, so a model cannot reach arbitrary paths on the host.
  */
-export async function targetFor(scope: WorkspaceScope, requested?: string): Promise<SceneTarget> {
+export async function targetFor(
+  scope: WorkspaceScope,
+  requested?: string,
+  drawing?: string,
+): Promise<SceneTarget> {
   const asked = requested?.trim()
-  if (asked === undefined || asked.length === 0) return defaultTarget(scope)
+  if (asked === undefined || asked.length === 0) return defaultTarget(scope, drawing)
   const primary = scope.roots[0] as string
   const candidate = isAbsolute(asked) ? resolve(asked) : resolve(primary, asked)
   // A relative `..` resolves outside the root; containment covers both forms.
@@ -240,13 +368,24 @@ export async function targetFor(scope: WorkspaceScope, requested?: string): Prom
   }
   if (!info.isDirectory()) throw new Error(`workspace is not a directory: ${candidate}`)
   // The explicit scene pins the configured root; another workspace keeps its own.
-  return sceneTarget(candidate, candidate === primary ? scope.scene : undefined)
+  return sceneTarget(candidate, candidate === primary ? scope.scene : undefined, drawing)
+}
+
+/** True for a tombstoned element that no longer appears on the canvas. */
+function isDeleted(element: Record<string, unknown>): boolean {
+  return element['isDeleted'] === true
+}
+
+/** Visible elements only; tombstoned elements stay in the file but not on screen. */
+export function visibleElements(elements: readonly unknown[]): Record<string, unknown>[] {
+  return elements.filter((element): element is Record<string, unknown> =>
+    typeof element === 'object' && element !== null && !isDeleted(element as Record<string, unknown>))
 }
 
 /** Summarize a scene without dumping every element field. */
 export function summarizeScene(scene: unknown): SceneSummary {
   const record = (typeof scene === 'object' && scene !== null) ? scene as Record<string, unknown> : {}
-  const elements = Array.isArray(record['elements']) ? record['elements'] : []
+  const elements = visibleElements(Array.isArray(record['elements']) ? record['elements'] : [])
   const appState = (typeof record['appState'] === 'object' && record['appState'] !== null)
     ? record['appState'] as Record<string, unknown>
     : {}
@@ -274,6 +413,117 @@ export function summarizeScene(scene: unknown): SceneSummary {
       ? appState['viewBackgroundColor']
       : 'transparent',
   }
+}
+
+/** Format a coordinate without trailing noise. */
+function formatNumber(value: unknown): string {
+  const number = typeof value === 'number' && Number.isFinite(value) ? value : 0
+  return Number.isInteger(number) ? String(number) : String(Math.round(number * 10) / 10)
+}
+
+/** Shorten and quote element text for one description line. */
+function formatText(value: string, max = 80): string {
+  const flat = value.replace(/\s+/g, ' ').trim()
+  const clipped = flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+  return JSON.stringify(clipped)
+}
+
+/**
+ * Build a structured text description of the visible canvas for a model: one
+ * line per element with type, id, geometry, text, image file and grouping
+ * state. Tombstoned elements are skipped, labels bound to a container are
+ * inlined, and the result is bounded in both element count and bytes.
+ * @param elements - the scene's element objects.
+ * @param appState - the scene's `appState` object.
+ * @param drawing - drawing id used in the header.
+ * @returns the description text.
+ */
+export function describeScene(
+  elements: readonly unknown[],
+  appState: Record<string, unknown>,
+  drawing: string = DEFAULT_DRAWING_ID,
+): string {
+  const visible = visibleElements(elements)
+  const labels = new Map<string, string>()
+  for (const element of visible) {
+    if (element['type'] !== 'text') continue
+    const containerId = element['containerId']
+    if (typeof containerId === 'string' && typeof element['text'] === 'string') {
+      labels.set(containerId, element['text'])
+    }
+  }
+  const background = backgroundOf(appState) ?? 'transparent'
+  const byType = new Map<string, number>()
+  for (const element of visible) {
+    const type = typeof element['type'] === 'string' ? element['type'] : 'unknown'
+    byType.set(type, (byType.get(type) ?? 0) + 1)
+  }
+  const typeText = [...byType.entries()].map(([type, count]) => `${type} ${count}`).join(', ') || 'none'
+  const lines: string[] = [
+    `Drawing "${drawing}": ${visible.length} visible elements on a ${background} canvas.`,
+    `Types: ${typeText}.`,
+  ]
+  const listed = visible.slice(0, DESCRIPTION_MAX_ELEMENTS)
+  listed.forEach((element, index) => {
+    const type = typeof element['type'] === 'string' ? element['type'] : 'unknown'
+    const id = typeof element['id'] === 'string' ? element['id'] : '(no id)'
+    const x = element['x']
+    const y = element['y']
+    const width = element['width']
+    const height = element['height']
+    const notes: string[] = []
+    if (typeof element['text'] === 'string') {
+      notes.push(`text ${formatText(element['text'])}`)
+      if (typeof element['containerId'] === 'string') notes.push(`label of ${element['containerId']}`)
+    }
+    if (type !== 'text') {
+      const label = labels.get(id)
+      if (label !== undefined) notes.push(`label ${formatText(label)}`)
+    }
+    if (type === 'image' && typeof element['fileId'] === 'string') {
+      notes.push(`file ${element['fileId']}`)
+    }
+    if ((type === 'arrow' || type === 'line') && Array.isArray(element['points'])) {
+      const points = element['points'] as unknown[]
+      notes.push(`points ${points.length}`)
+      const last = points[points.length - 1]
+      if (Array.isArray(last) && typeof last[0] === 'number' && typeof last[1] === 'number') {
+        const baseX = typeof x === 'number' ? x : 0
+        const baseY = typeof y === 'number' ? y : 0
+        const start = points[0]
+        if (Array.isArray(start) && typeof start[0] === 'number' && typeof start[1] === 'number') {
+          notes.push(`from (${formatNumber(baseX + start[0])},${formatNumber(baseY + start[1])})`)
+        }
+        notes.push(`to (${formatNumber(baseX + last[0])},${formatNumber(baseY + last[1])})`)
+      }
+    }
+    if (element['locked'] === true) notes.push('locked')
+    if (Array.isArray(element['groupIds']) && element['groupIds'].length > 0) {
+      notes.push(`groups=${(element['groupIds'] as unknown[]).map(String).join(',')}`)
+    }
+    const opacity = element['opacity']
+    if (typeof opacity === 'number' && opacity < 100) notes.push(`opacity ${formatNumber(opacity)}`)
+    const suffix = notes.length > 0 ? ` — ${notes.join('; ')}` : ''
+    lines.push(
+      `${index + 1}. ${type} id=${id} at (${formatNumber(x)},${formatNumber(y)}) `
+      + `size ${formatNumber(width)}x${formatNumber(height)}${suffix}`,
+    )
+  })
+  if (visible.length > listed.length) {
+    lines.push(`… ${visible.length - listed.length} more elements not listed.`)
+  }
+  const result: string[] = []
+  let bytes = 0
+  for (const line of lines) {
+    const size = Buffer.byteLength(line, 'utf8') + 1
+    if (bytes + size > DESCRIPTION_MAX_BYTES) {
+      result.push('… description truncated.')
+      break
+    }
+    result.push(line)
+    bytes += size
+  }
+  return result.join('\n')
 }
 
 /** Generate a short unique element id (url-safe, 12 chars). */
@@ -725,12 +975,13 @@ export function previewSvgOf(elements: readonly unknown[], appState: Record<stri
   return svg.length <= PREVIEW_SVG_MAX_BYTES ? svg : undefined
 }
 
-/** Parse a scene file body, returning the record and its elements/appState. */
-function splitScene(parsed: unknown): {
-  elements: unknown[]
-  appState: Record<string, unknown>
-  files: Record<string, unknown>
-} {
+/** Empty scene parts used for a missing or corrupt file. */
+function emptyParts(): SceneParts {
+  return { elements: [], appState: {}, files: {} }
+}
+
+/** Parse a scene body, returning its elements, app state and embedded files. */
+export function splitScene(parsed: unknown): SceneParts {
   const record = (typeof parsed === 'object' && parsed !== null) ? parsed as Record<string, unknown> : {}
   const elements = Array.isArray(record['elements']) ? record['elements'] : []
   const appState = (typeof record['appState'] === 'object' && record['appState'] !== null)
@@ -743,49 +994,108 @@ function splitScene(parsed: unknown): {
 }
 
 /**
- * Read the target scene and return a bounded summary plus a compact element
- * list. Missing or corrupt files do not throw: a missing file reads as an empty
- * canvas, a corrupt file as an empty scene with an `error` field, matching the
- * web surface's behavior.
+ * Load the scene file without throwing on a missing or corrupt file. A corrupt
+ * file keeps its raw text and reports `error`, so callers can decide whether to
+ * start from an empty canvas or refuse the operation.
  * @param target - resolved scene target.
- * @returns the read result.
+ * @returns the loaded scene parts and any read error.
  */
-export async function readScene(target: SceneTarget): Promise<ReadResult> {
+export async function loadSceneParts(target: SceneTarget): Promise<LoadedScene> {
   let text: string
   try {
     text = await readFile(target.scenePath, 'utf8')
   } catch {
-    return { cwd: target.workspace, exists: false, summary: EMPTY_SUMMARY, elements: [] }
+    return { exists: false, parts: emptyParts() }
   }
-  let scene: unknown
+  let parsed: unknown
   try {
-    scene = JSON.parse(text)
+    parsed = JSON.parse(text)
   } catch {
     return {
-      cwd: target.workspace,
       exists: true,
-      summary: EMPTY_SUMMARY,
-      elements: [],
+      text,
+      parts: emptyParts(),
       error: 'scene file is corrupted (not valid JSON)',
     }
   }
-  const { elements } = splitScene(scene)
-  const compact = elements.map((element): CompactElement => {
-    if (typeof element !== 'object' || element === null) return {}
-    const entry = element as Record<string, unknown>
+  return { exists: true, text, parts: splitScene(parsed) }
+}
+
+/**
+ * Persist scene parts after repairing render-critical fields. Embedded image
+ * `files` are written only when non-empty, matching Excalidraw's own files.
+ * @param target - resolved scene target.
+ * @param parts - elements, app state and embedded files.
+ * @returns the parts as persisted.
+ */
+export async function saveSceneParts(target: SceneTarget, parts: SceneParts): Promise<SceneParts> {
+  const repaired = sanitizeScene({ elements: parts.elements, appState: parts.appState }) as Record<string, unknown>
+  const persisted: Record<string, unknown> = {
+    elements: Array.isArray(repaired['elements']) ? repaired['elements'] : [],
+    appState: typeof repaired['appState'] === 'object' && repaired['appState'] !== null ? repaired['appState'] : {},
+  }
+  if (Object.keys(parts.files).length > 0) persisted['files'] = parts.files
+  await mkdir(dirname(target.scenePath), { recursive: true })
+  await writeFile(target.scenePath, JSON.stringify(persisted), 'utf8')
+  return splitScene(persisted)
+}
+
+/**
+ * Read the target scene and return a bounded summary, a compact element list
+ * and a structured text description. Missing or corrupt files do not throw: a
+ * missing file reads as an empty canvas, a corrupt file as an empty scene with
+ * an `error` field, matching the web surface's behavior.
+ * @param target - resolved scene target.
+ * @returns the read result.
+ */
+export async function readScene(target: SceneTarget): Promise<ReadResult> {
+  const loaded = await loadSceneParts(target)
+  if (!loaded.exists) {
+    return {
+      cwd: target.workspace,
+      drawing: target.drawing,
+      path: target.scenePath,
+      exists: false,
+      summary: EMPTY_SUMMARY,
+      elements: [],
+      description: describeScene([], {}, target.drawing),
+    }
+  }
+  if (loaded.error !== undefined) {
+    return {
+      cwd: target.workspace,
+      drawing: target.drawing,
+      path: target.scenePath,
+      exists: true,
+      summary: EMPTY_SUMMARY,
+      elements: [],
+      description: describeScene([], {}, target.drawing),
+      error: loaded.error,
+    }
+  }
+  const { elements, appState } = loaded.parts
+  const compact = visibleElements(elements).map((entry): CompactElement => {
     const out: CompactElement = {}
-    for (const field of ['id', 'type', 'x', 'y', 'width', 'height', 'text'] as const) {
+    for (const field of [
+      'id', 'type', 'x', 'y', 'width', 'height', 'text',
+      'locked', 'groupIds', 'containerId', 'fileId',
+    ] as const) {
       if (entry[field] !== undefined) out[field] = entry[field] as JsonValue
     }
     return out
   })
   const result: ReadResult = {
     cwd: target.workspace,
+    drawing: target.drawing,
+    path: target.scenePath,
     exists: true,
-    summary: summarizeScene(scene),
+    summary: summarizeScene(loaded.parts),
     elements: compact,
+    description: describeScene(elements, appState, target.drawing),
   }
-  if (text.length <= READ_FULL_JSON_MAX_BYTES) result.sceneJson = text
+  if (loaded.text !== undefined && loaded.text.length <= READ_FULL_JSON_MAX_BYTES) {
+    result.sceneJson = loaded.text
+  }
   return result
 }
 
@@ -815,12 +1125,18 @@ export async function writeScene(target: SceneTarget, sceneJson: string): Promis
   if (!Array.isArray(record['elements']) || typeof record['appState'] !== 'object' || record['appState'] === null) {
     throw new Error('excalidraw_write: `scene` must contain an `elements` array and an `appState` object')
   }
-  const repaired = sanitizeScene(record) as Record<string, unknown>
-  await mkdir(dirname(target.scenePath), { recursive: true })
-  await writeFile(target.scenePath, JSON.stringify(repaired), 'utf8')
-  const { elements, appState } = splitScene(repaired)
-  const result: MutationResult = { ok: true, cwd: target.workspace, elementCount: elements.length }
-  const preview = previewSvgOf(elements, appState)
+  const persisted = await saveSceneParts(target, {
+    elements: record['elements'] as unknown[],
+    appState: record['appState'] as Record<string, unknown>,
+    files: splitScene(record).files,
+  })
+  const result: MutationResult = {
+    ok: true,
+    cwd: target.workspace,
+    drawing: target.drawing,
+    elementCount: persisted.elements.length,
+  }
+  const preview = previewSvgOf(persisted.elements, persisted.appState)
   if (preview !== undefined) result.previewSvg = preview
   return result
 }
@@ -884,38 +1200,24 @@ export async function drawScene(
   if (built.length === 0) {
     throw new Error('excalidraw_draw: no supported element types in `elements`')
   }
-  // Load the existing scene (tolerate missing/corrupt by starting fresh).
-  let existing: unknown[] = []
-  let appState: Record<string, unknown> = {}
-  let files: Record<string, unknown> = {}
-  try {
-    const scene = JSON.parse(await readFile(target.scenePath, 'utf8')) as Record<string, unknown>
-    if (Array.isArray(scene['elements'])) existing = scene['elements'] as unknown[]
-    if (typeof scene['appState'] === 'object' && scene['appState'] !== null) {
-      appState = scene['appState'] as Record<string, unknown>
-    }
-    // Embedded images live in `files`; dropping it on draw would orphan them.
-    if (typeof scene['files'] === 'object' && scene['files'] !== null) {
-      files = scene['files'] as Record<string, unknown>
-    }
-  } catch {
-    // Missing or unreadable scene → start from an empty canvas.
-  }
-  const elements = action === 'replace' ? built : [...existing, ...built]
-  await mkdir(dirname(target.scenePath), { recursive: true })
-  await writeFile(
-    target.scenePath,
-    JSON.stringify({ elements, appState, ...(Object.keys(files).length > 0 ? { files } : {}) }),
-    'utf8',
-  )
+  // Missing or corrupt scene → start from an empty canvas; embedded image
+  // `files` are kept so a draw never orphans existing images.
+  const loaded = await loadSceneParts(target)
+  const elements = action === 'replace' ? built : [...loaded.parts.elements, ...built]
+  const persisted = await saveSceneParts(target, {
+    elements,
+    appState: loaded.parts.appState,
+    files: loaded.parts.files,
+  })
   const result: DrawResult = {
     ok: true,
     cwd: target.workspace,
+    drawing: target.drawing,
     added: built.length,
-    totalElements: elements.length,
+    totalElements: persisted.elements.length,
     skipped,
   }
-  const preview = previewSvgOf(elements, appState)
+  const preview = previewSvgOf(persisted.elements, persisted.appState)
   if (preview !== undefined) result.previewSvg = preview
   return result
 }
@@ -1000,28 +1302,21 @@ export async function exportScene(
     throw new Error('excalidraw_export: `scale` must be between 0.5 and 4')
   }
   const relPath = options.path?.trim()
-  const defaultPath = format === 'png'
-    ? DEFAULT_EXPORT_PNG_RELATIVE
-    : format === 'excalidraw' ? DEFAULT_EXPORT_FILE_RELATIVE : DEFAULT_EXPORT_RELATIVE
+  const defaultPath = defaultExportRelative(format, target.drawing)
   // Validate the destination before touching the scene: a bad path is a caller
   // error regardless of whether a scene exists yet.
   const abs = resolveExportPath(
     target.workspace,
     relPath !== undefined && relPath.length > 0 ? relPath : defaultPath,
   )
-  let text: string
-  try {
-    text = await readFile(target.scenePath, 'utf8')
-  } catch {
+  const loaded = await loadSceneParts(target)
+  if (!loaded.exists) {
     throw new Error('excalidraw_export: no scene to export — draw something first')
   }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
+  if (loaded.error !== undefined) {
     throw new Error('excalidraw_export: scene file is corrupted (not valid JSON)')
   }
-  const { elements, appState, files } = splitScene(parsed)
+  const { elements, appState, files } = loaded.parts
   if (format === 'excalidraw') {
     const data = serializeExcalidrawFile(elements, appState, files)
     await mkdir(dirname(abs), { recursive: true })
@@ -1029,6 +1324,7 @@ export async function exportScene(
     return {
       ok: true,
       path: abs,
+      drawing: target.drawing,
       format,
       elementCount: elements.length,
       bytes: Buffer.byteLength(data, 'utf8'),
@@ -1047,11 +1343,60 @@ export async function exportScene(
   return {
     ok: true,
     path: abs,
+    drawing: target.drawing,
     format,
     elementCount: elements.length,
     bytes: rendered.data.length,
     width: rendered.width,
     height: rendered.height,
+  }
+}
+
+/**
+ * Render the target scene to a PNG screenshot inside the workspace. Uses the
+ * same official Excalidraw renderer as `exportScene`; Chrome is required.
+ * @param target - resolved scene target.
+ * @param options - output path (workspace-relative), PNG scale, background handling.
+ * @returns the screenshot metadata.
+ */
+export async function screenshotScene(
+  target: SceneTarget,
+  options: { path?: string; transparent?: boolean; scale?: number } = {},
+): Promise<ScreenshotResult> {
+  const scale = options.scale ?? 1
+  if (!Number.isFinite(scale) || scale < 0.5 || scale > 4) {
+    throw new Error('excalidraw_screenshot: `scale` must be between 0.5 and 4')
+  }
+  const relPath = options.path?.trim()
+  const abs = resolveWorkspacePath(
+    target.workspace,
+    relPath !== undefined && relPath.length > 0 ? relPath : defaultScreenshotRelative(target.drawing),
+    'excalidraw_screenshot',
+  )
+  const loaded = await loadSceneParts(target)
+  if (!loaded.exists) {
+    throw new Error('excalidraw_screenshot: no scene to screenshot — draw something first')
+  }
+  if (loaded.error !== undefined) {
+    throw new Error('excalidraw_screenshot: scene file is corrupted (not valid JSON)')
+  }
+  const { elements, appState, files } = loaded.parts
+  const transparent = options.transparent === true
+  const { renderScene } = await import('./render.js')
+  const rendered = await renderScene(
+    { elements, appState, ...(Object.keys(files).length > 0 ? { files } : {}) },
+    { format: 'png', scale, transparent, background: transparent ? null : backgroundOf(appState) },
+  )
+  await mkdir(dirname(abs), { recursive: true })
+  await writeFile(abs, rendered.data)
+  return {
+    ok: true,
+    cwd: target.workspace,
+    drawing: target.drawing,
+    path: abs,
+    width: rendered.width,
+    height: rendered.height,
+    bytes: rendered.data.length,
   }
 }
 
@@ -1093,20 +1438,16 @@ export async function importScene(target: SceneTarget, relPath: string): Promise
   if (!Array.isArray(record['elements'])) {
     throw new Error(`excalidraw_import: ${trimmed} has no \`elements\` array`)
   }
-  const { elements, appState, files } = splitScene(record)
-  const scene = sanitizeScene({ elements, appState }) as Record<string, unknown>
-  if (Object.keys(files).length > 0) scene['files'] = files
-  await mkdir(dirname(target.scenePath), { recursive: true })
-  await writeFile(target.scenePath, JSON.stringify(scene), 'utf8')
-  const imported = scene['elements'] as unknown[]
+  const persisted = await saveSceneParts(target, splitScene(record))
   const result: ImportResult = {
     ok: true,
     cwd: target.workspace,
+    drawing: target.drawing,
     path: abs,
-    elementCount: imported.length,
+    elementCount: persisted.elements.length,
     bytes: Buffer.byteLength(text, 'utf8'),
   }
-  const preview = previewSvgOf(imported, appState)
+  const preview = previewSvgOf(persisted.elements, persisted.appState)
   if (preview !== undefined) result.previewSvg = preview
   return result
 }

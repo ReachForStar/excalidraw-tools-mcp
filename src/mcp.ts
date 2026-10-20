@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `excalidraw-mcp` entry point. Serves the Excalidraw scene tools to any MCP
+ * `excalidraw-mcp` entry point. Serves the Excalidraw canvas tools to any MCP
  * client over stdio (default) or Streamable HTTP.
  *
  * Configuration comes from flags or environment variables so the same binary
@@ -50,13 +50,13 @@ export class UsageError extends Error {}
 /** Usage text. */
 const USAGE = `Usage: excalidraw-mcp [options]
 
-Excalidraw scene tools over the Model Context Protocol.
+Excalidraw canvas tools over the Model Context Protocol.
 
 Options:
   -w, --workspace <dir>   Workspace root; exports stay inside it (default: cwd).
                           Repeat the flag to serve several workspaces; every
                           tool call then names its workspace.
-      --scene <path>      Scene file, absolute or workspace-relative
+      --scene <path>      Default drawing's scene file, absolute or workspace-relative
                           (default: ${SCENE_RELATIVE}); single-workspace only.
       --http              Serve Streamable HTTP instead of stdio.
       --transport <name>  "stdio" (default) or "http".

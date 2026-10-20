@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { apply, SCENE_RELATIVE } from '../src/index.ts'
+import { apply, defaultExportRelative, defaultScreenshotRelative, normalizeDrawingId, SCENE_RELATIVE } from '../src/index.ts'
 import { closeRenderer, findChrome } from '../src/render.ts'
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -59,13 +59,26 @@ function execFor(cwd: string) {
 }
 
 describe('excalidraw model tools', () => {
-  it('registers all five tools and unwinds on dispose', () => {
+  it('registers all drawing tools and unwinds on dispose', () => {
     const b = bench()
     expect(b.registered.map(entry => entry.name).sort()).toEqual([
+      'excalidraw_add_image',
+      'excalidraw_create_drawing',
+      'excalidraw_delete_drawing',
       'excalidraw_draw',
+      'excalidraw_element_create',
+      'excalidraw_element_delete',
+      'excalidraw_element_get',
+      'excalidraw_element_update',
       'excalidraw_export',
+      'excalidraw_export_to_json',
+      'excalidraw_get_drawing',
       'excalidraw_import',
+      'excalidraw_layout',
+      'excalidraw_list_drawings',
       'excalidraw_read',
+      'excalidraw_screenshot',
+      'excalidraw_update_drawing',
       'excalidraw_write',
     ])
     b.disposers.forEach(dispose => dispose())
@@ -331,14 +344,117 @@ describe('excalidraw model tools', () => {
     }
   })
 
-  it('export fails when no scene exists', async () => {
+  it('manages named drawings, elements and layout in the session workspace', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
     try {
       const b = bench()
-      const exportTool = b.registered.find(entry => entry.name === 'excalidraw_export')!
-      await expect(exportTool.definition.execute({}, execFor(workspace))).rejects.toThrow('no scene to export')
+      const tool = (name: string) => b.registered.find(entry => entry.name === name)!.definition
+      const exec = execFor(workspace)
+
+      const created = await tool('excalidraw_create_drawing').execute({ drawing: 'flow' }, exec)
+      expect(created).toMatchObject({ ok: true, drawing: 'flow', elementCount: 0 })
+
+      const elements = await tool('excalidraw_element_create').execute({
+        drawing: 'flow',
+        elements: [
+          { id: 'a', type: 'rectangle', x: 0, y: 0, width: 10, height: 10 },
+          { id: 'b', type: 'rectangle', x: 50, y: 20, width: 10, height: 10 },
+        ],
+      }, exec)
+      expect(elements).toMatchObject({ ok: true, drawing: 'flow', added: 2, totalElements: 2 })
+
+      const aligned = await tool('excalidraw_layout').execute({
+        drawing: 'flow',
+        action: 'align-left',
+        ids: ['a', 'b'],
+      }, exec)
+      expect(aligned).toMatchObject({ ok: true, action: 'align-left', affected: 2 })
+
+      const got = await tool('excalidraw_get_drawing').execute({ drawing: 'flow' }, exec)
+      expect((got as { summary: { elementCount: number } }).summary.elementCount).toBe(2)
+      expect((got as { description: string }).description).toContain('Drawing "flow": 2 visible elements')
+
+      const listed = await tool('excalidraw_list_drawings').execute({}, exec)
+      expect(listed).toMatchObject({ ok: true, count: 1 })
+      expect((listed as { drawings: { id: string }[] }).drawings[0]).toMatchObject({ id: 'flow' })
+
+      const exported = await tool('excalidraw_export_to_json').execute({ drawing: 'flow' }, exec)
+      expect(exported).toMatchObject({
+        ok: true,
+        drawing: 'flow',
+        path: join(workspace, '.agents', 'excalidraw', 'exports', 'flow.excalidraw'),
+      })
+
+      const updated = await tool('excalidraw_update_drawing').execute({
+        drawing: 'flow',
+        scene: JSON.stringify({ elements: [{ id: 'c', type: 'ellipse', x: 0, y: 0, width: 5, height: 5 }], appState: {} }),
+      }, exec)
+      expect(updated).toMatchObject({ ok: true, drawing: 'flow', elementCount: 1 })
+
+      const deleted = await tool('excalidraw_delete_drawing').execute({ drawing: 'flow' }, exec)
+      expect(deleted).toMatchObject({ ok: true, drawing: 'flow', deleted: true })
+      expect((await tool('excalidraw_get_drawing').execute({ drawing: 'flow' }, exec) as { exists: boolean }).exists).toBe(false)
     } finally {
       await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('adds an external image through the plugin tool', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
+    try {
+      const b = bench()
+      await mkdir(join(workspace, 'assets'), { recursive: true })
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK8sAAAAASUVORK5CYII=',
+        'base64',
+      )
+      await writeFile(join(workspace, 'assets', 'icon.png'), png)
+      const addTool = b.registered.find(entry => entry.name === 'excalidraw_add_image')!
+      const added = await addTool.definition.execute({ path: 'assets/icon.png', x: 2, y: 3 }, execFor(workspace))
+      expect(added).toMatchObject({ ok: true, width: 1, height: 1, mimeType: 'image/png', totalElements: 1 })
+      const scene = JSON.parse(await readFile(join(workspace, SCENE_RELATIVE), 'utf8')) as {
+        elements: { type: string; fileId: string }[]
+        files: Record<string, unknown>
+      }
+      expect(scene.elements[0]).toMatchObject({ type: 'image', fileId: (added as { fileId: string }).fileId })
+      expect(Object.keys(scene.files)).toHaveLength(1)
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  withChrome('screenshot writes a PNG through the plugin tool', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
+    try {
+      const b = bench()
+      const drawTool = b.registered.find(entry => entry.name === 'excalidraw_draw')!
+      await drawTool.definition.execute({
+        elements: [{ type: 'rectangle', x: 0, y: 0, width: 80, height: 40 }],
+      }, execFor(workspace))
+      const shotTool = b.registered.find(entry => entry.name === 'excalidraw_screenshot')!
+      const result = await shotTool.definition.execute({ path: 'shots/plugin.png' }, execFor(workspace))
+      expect(result).toMatchObject({ ok: true, drawing: 'default', path: join(workspace, 'shots', 'plugin.png') })
+      const png = await readFile((result as { path: string }).path)
+      expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps default paths and namespaces named drawings', () => {
+    expect(defaultExportRelative('svg', 'default')).toBe(join('.agents', 'excalidraw', 'export.svg'))
+    expect(defaultExportRelative('png', 'default')).toBe(join('.agents', 'excalidraw', 'export.png'))
+    expect(defaultExportRelative('excalidraw', 'default')).toBe(join('.agents', 'excalidraw', 'export.excalidraw'))
+    expect(defaultExportRelative('png', 'arch')).toBe(join('.agents', 'excalidraw', 'exports', 'arch.png'))
+    expect(defaultScreenshotRelative('default')).toBe(join('.agents', 'excalidraw', 'screenshot.png'))
+    expect(defaultScreenshotRelative('arch')).toBe(join('.agents', 'excalidraw', 'screenshots', 'arch.png'))
+  })
+
+  it('normalizes safe drawing ids and rejects path escapes', () => {
+    expect(normalizeDrawingId()).toBe('default')
+    expect(normalizeDrawingId('  arch  ')).toBe('arch')
+    for (const id of ['../escape', 'a/b', 'a\\b', '.hidden', '-dash', 'CON', 'lpt9', 'a'.repeat(65)]) {
+      expect(() => normalizeDrawingId(id)).toThrow('invalid drawing id')
     }
   })
 })

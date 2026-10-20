@@ -49,14 +49,27 @@ afterAll(async () => {
 })
 
 describe('excalidraw MCP tools', () => {
-  it('lists the five scene tools with input schemas', async () => {
+  it('lists all drawing, element, layout and media tools with input schemas', async () => {
     const client = await connect(await workspace())
     const { tools } = await client.listTools()
     expect(tools.map(tool => tool.name).sort()).toEqual([
+      'excalidraw_add_image',
+      'excalidraw_create_drawing',
+      'excalidraw_delete_drawing',
       'excalidraw_draw',
+      'excalidraw_element_create',
+      'excalidraw_element_delete',
+      'excalidraw_element_get',
+      'excalidraw_element_update',
       'excalidraw_export',
+      'excalidraw_export_to_json',
+      'excalidraw_get_drawing',
       'excalidraw_import',
+      'excalidraw_layout',
+      'excalidraw_list_drawings',
       'excalidraw_read',
+      'excalidraw_screenshot',
+      'excalidraw_update_drawing',
       'excalidraw_write',
     ])
     const draw = tools.find(tool => tool.name === 'excalidraw_draw')
@@ -419,6 +432,388 @@ describe('excalidraw MCP tools', () => {
     const read = payload(await client.callTool({ name: 'excalidraw_read', arguments: {} }))
     expect(read['sceneJson']).toBeUndefined()
     expect((read['summary'] as { elementCount: number }).elementCount).toBe(1)
+    await client.close()
+  })
+
+  it('creates, lists, updates, exports and deletes drawings', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+
+    const created = payload(await client.callTool({
+      name: 'excalidraw_create_drawing',
+      arguments: { drawing: 'arch' },
+    }))
+    expect(created).toMatchObject({
+      ok: true,
+      drawing: 'arch',
+      elementCount: 0,
+      path: join(root, '.agents', 'excalidraw', 'drawings', 'arch.json'),
+    })
+
+    const duplicate = await client.callTool({
+      name: 'excalidraw_create_drawing',
+      arguments: { drawing: 'arch' },
+    })
+    expect(duplicate.isError).toBe(true)
+    expect((duplicate.content as { text: string }[])[0]!.text).toContain('already exists')
+
+    const invalid = await client.callTool({
+      name: 'excalidraw_create_drawing',
+      arguments: { drawing: '../escape' },
+    })
+    expect(invalid.isError).toBe(true)
+    expect((invalid.content as { text: string }[])[0]!.text).toContain('invalid drawing id')
+
+    expect(payload(await client.callTool({
+      name: 'excalidraw_get_drawing',
+      arguments: { drawing: 'arch' },
+    }))).toMatchObject({
+      drawing: 'arch',
+      exists: true,
+      description: expect.stringContaining('Drawing "arch": 0 visible elements'),
+    })
+
+    const updated = payload(await client.callTool({
+      name: 'excalidraw_update_drawing',
+      arguments: {
+        drawing: 'arch',
+        scene: JSON.stringify({
+          elements: [{ id: 'box', type: 'rectangle', x: 0, y: 0, width: 10, height: 10 }],
+          appState: {},
+        }),
+      },
+    }))
+    expect(updated).toMatchObject({ ok: true, drawing: 'arch', elementCount: 1 })
+
+    const exported = payload(await client.callTool({
+      name: 'excalidraw_export_to_json',
+      arguments: { drawing: 'arch' },
+    }))
+    expect(exported).toMatchObject({
+      ok: true,
+      drawing: 'arch',
+      format: 'excalidraw',
+      elementCount: 1,
+      path: join(root, '.agents', 'excalidraw', 'exports', 'arch.excalidraw'),
+    })
+    const native = JSON.parse(await readFile(String(exported['path']), 'utf8')) as {
+      type: string
+      elements: { id: string }[]
+    }
+    expect(native.type).toBe('excalidraw')
+    expect(native.elements.map(element => element.id)).toEqual(['box'])
+
+    const listed = payload(await client.callTool({ name: 'excalidraw_list_drawings', arguments: {} }))
+    expect(listed['count']).toBe(1)
+    const entries = listed['drawings'] as { id: string; elementCount: number }[]
+    expect(entries[0]).toMatchObject({ id: 'arch', elementCount: 1 })
+
+    // The default drawing is addressable explicitly and sorts first.
+    expect(payload(await client.callTool({
+      name: 'excalidraw_create_drawing',
+      arguments: { drawing: 'default' },
+    }))).toMatchObject({ drawing: 'default' })
+    const withDefault = payload(await client.callTool({ name: 'excalidraw_list_drawings', arguments: {} }))
+    expect((withDefault['drawings'] as { id: string }[]).map(entry => entry.id)).toEqual(['default', 'arch'])
+
+    expect(payload(await client.callTool({
+      name: 'excalidraw_delete_drawing',
+      arguments: { drawing: 'arch' },
+    }))).toMatchObject({ ok: true, drawing: 'arch', deleted: true })
+    expect(payload(await client.callTool({
+      name: 'excalidraw_get_drawing',
+      arguments: { drawing: 'arch' },
+    }))).toMatchObject({ exists: false })
+
+    const missing = await client.callTool({
+      name: 'excalidraw_delete_drawing',
+      arguments: { drawing: 'arch' },
+    })
+    expect(missing.isError).toBe(true)
+    expect((missing.content as { text: string }[])[0]!.text).toContain('drawing not found')
+    await client.close()
+  })
+
+  it('creates, reads, updates and deletes individual elements', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+
+    const created = payload(await client.callTool({
+      name: 'excalidraw_element_create',
+      arguments: {
+        elements: [
+          {
+            id: 'r1', type: 'rectangle', x: 0, y: 0, width: 100, height: 50,
+            boundElements: [{ type: 'text', id: 't1' }],
+          },
+          { id: 't1', type: 'text', x: 10, y: 15, width: 40, height: 20, text: 'label', containerId: 'r1' },
+        ],
+      },
+    }))
+    expect(created).toMatchObject({ ok: true, added: 2, ids: ['r1', 't1'], skipped: 0, totalElements: 2 })
+
+    const got = payload(await client.callTool({
+      name: 'excalidraw_element_get',
+      arguments: { id: 'r1' },
+    }))
+    expect(got['element']).toMatchObject({ id: 'r1', type: 'rectangle', width: 100 })
+
+    const patched = payload(await client.callTool({
+      name: 'excalidraw_element_update',
+      arguments: { id: 'r1', patch: { width: 120, backgroundColor: '#ffc9c9' } },
+    }))
+    const updated = patched['element'] as { width: number; backgroundColor: string; version: number }
+    expect(updated).toMatchObject({ width: 120, backgroundColor: '#ffc9c9' })
+    expect(updated.version).toBeGreaterThanOrEqual(2)
+
+    const duplicate = await client.callTool({
+      name: 'excalidraw_element_create',
+      arguments: { elements: [{ id: 'r1', type: 'ellipse', x: 0, y: 0, width: 5, height: 5 }] },
+    })
+    expect(duplicate.isError).toBe(true)
+    expect((duplicate.content as { text: string }[])[0]!.text).toContain('already exists')
+
+    const badImage = await client.callTool({
+      name: 'excalidraw_element_create',
+      arguments: { elements: [{ type: 'image', x: 0, y: 0, width: 5, height: 5 }] },
+    })
+    expect(badImage.isError).toBe(true)
+    expect((badImage.content as { text: string }[])[0]!.text).toContain('excalidraw_add_image')
+
+    const deleted = payload(await client.callTool({
+      name: 'excalidraw_element_delete',
+      arguments: { ids: ['r1', 'missing'] },
+    }))
+    expect(deleted).toMatchObject({
+      ok: true,
+      deleted: expect.arrayContaining(['r1', 't1']),
+      missing: ['missing'],
+      totalElements: 0,
+    })
+    await client.close()
+  })
+
+  it('aligns, distributes, groups, locks, duplicates and ungroups', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    await client.callTool({
+      name: 'excalidraw_element_create',
+      arguments: {
+        drawing: 'layout',
+        elements: [
+          { id: 'a', type: 'rectangle', x: 0, y: 10, width: 10, height: 10 },
+          { id: 'b', type: 'rectangle', x: 100, y: 50, width: 20, height: 10 },
+          { id: 'c', type: 'rectangle', x: 200, y: 30, width: 10, height: 10 },
+        ],
+      },
+    })
+
+    const distributed = payload(await client.callTool({
+      name: 'excalidraw_layout',
+      arguments: { drawing: 'layout', action: 'distribute-h' },
+    }))
+    expect(distributed).toMatchObject({ ok: true, action: 'distribute-h', affected: 3 })
+    const xs: number[] = []
+    for (const id of ['a', 'b', 'c']) {
+      const element = payload(await client.callTool({
+        name: 'excalidraw_element_get',
+        arguments: { drawing: 'layout', id },
+      }))['element'] as { x: number }
+      xs.push(element.x)
+    }
+    expect(xs[1]! - (xs[0]! + 10)).toBeCloseTo(85)
+    expect(xs[2]! - (xs[1]! + 20)).toBeCloseTo(85)
+
+    const aligned = payload(await client.callTool({
+      name: 'excalidraw_layout',
+      arguments: { drawing: 'layout', action: 'align-top' },
+    }))
+    expect(aligned).toMatchObject({ ok: true, affected: 3 })
+    for (const id of ['a', 'b', 'c']) {
+      const element = payload(await client.callTool({
+        name: 'excalidraw_element_get',
+        arguments: { drawing: 'layout', id },
+      }))['element'] as { y: number }
+      expect(element.y).toBe(10)
+    }
+
+    const grouped = payload(await client.callTool({
+      name: 'excalidraw_layout',
+      arguments: { drawing: 'layout', action: 'group', ids: ['a', 'b'] },
+    }))
+    const groupId = grouped['groupId'] as string
+    expect(grouped).toMatchObject({ ok: true, affected: 2 })
+    expect(groupId).toMatch(/^group-/)
+    for (const id of ['a', 'b']) {
+      const element = payload(await client.callTool({
+        name: 'excalidraw_element_get',
+        arguments: { drawing: 'layout', id },
+      }))['element'] as { groupIds: string[] }
+      expect(element.groupIds).toContain(groupId)
+    }
+
+    // Locking a group member expands to the whole group.
+    expect(payload(await client.callTool({
+      name: 'excalidraw_layout',
+      arguments: { drawing: 'layout', action: 'lock', ids: ['b'] },
+    }))).toMatchObject({ ok: true, affected: 2 })
+    expect((payload(await client.callTool({
+      name: 'excalidraw_element_get',
+      arguments: { drawing: 'layout', id: 'b' },
+    }))['element'] as { locked: boolean }).locked).toBe(true)
+    expect((payload(await client.callTool({
+      name: 'excalidraw_element_get',
+      arguments: { drawing: 'layout', id: 'a' },
+    }))['element'] as { locked: boolean }).locked).toBe(true)
+
+    const duplicated = payload(await client.callTool({
+      name: 'excalidraw_layout',
+      arguments: { drawing: 'layout', action: 'duplicate', ids: ['a', 'b'], offsetX: 50, offsetY: 60 },
+    }))
+    const copies = duplicated['ids'] as string[]
+    expect(copies).toHaveLength(2)
+    const copyGroups: string[] = []
+    for (const id of copies) {
+      const element = payload(await client.callTool({
+        name: 'excalidraw_element_get',
+        arguments: { drawing: 'layout', id },
+      }))['element'] as { groupIds: string[]; x: number }
+      copyGroups.push(...element.groupIds)
+      expect(element.x).toBeGreaterThan(0)
+    }
+    expect(new Set(copyGroups).size).toBe(1)
+    expect(copyGroups[0]).not.toBe(groupId)
+
+    const ungrouped = payload(await client.callTool({
+      name: 'excalidraw_layout',
+      arguments: { drawing: 'layout', action: 'ungroup', ids: copies },
+    }))
+    expect(ungrouped['removedGroups']).toContain(copyGroups[0])
+    await client.close()
+  })
+
+  it('adds an external image and keeps it across later draws', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    await mkdir(join(root, 'assets'), { recursive: true })
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK8sAAAAASUVORK5CYII=',
+      'base64',
+    )
+    await writeFile(join(root, 'assets', 'icon.png'), png)
+
+    const added = payload(await client.callTool({
+      name: 'excalidraw_add_image',
+      arguments: { path: 'assets/icon.png', x: 5, y: 6 },
+    }))
+    expect(added).toMatchObject({
+      ok: true,
+      width: 1,
+      height: 1,
+      mimeType: 'image/png',
+      bytes: png.length,
+      totalElements: 1,
+    })
+    const fileId = added['fileId'] as string
+    const elementId = added['elementId'] as string
+    expect(fileId).toMatch(/^file-/)
+    expect(elementId.length).toBeGreaterThan(0)
+
+    const onDisk = JSON.parse(await readFile(join(root, SCENE_RELATIVE), 'utf8')) as {
+      elements: { id: string; type: string; fileId: string; x: number; y: number }[]
+      files: Record<string, { mimeType: string; dataURL: string }>
+    }
+    expect(onDisk.elements[0]).toMatchObject({ id: elementId, type: 'image', fileId, x: 5, y: 6 })
+    expect(onDisk.files[fileId]).toMatchObject({ mimeType: 'image/png' })
+    expect(onDisk.files[fileId]!.dataURL.startsWith('data:image/png;base64,')).toBe(true)
+
+    const scaled = payload(await client.callTool({
+      name: 'excalidraw_add_image',
+      arguments: { path: 'assets/icon.png', width: 24 },
+    }))
+    expect(scaled).toMatchObject({ width: 24, height: 24 })
+
+    await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: { elements: [{ type: 'rectangle', x: 30, y: 0, width: 10, height: 10 }] },
+    })
+    const afterDraw = JSON.parse(await readFile(join(root, SCENE_RELATIVE), 'utf8')) as {
+      files: Record<string, unknown>
+    }
+    expect(Object.keys(afterDraw.files)).toHaveLength(2)
+
+    const unsupported = await client.callTool({
+      name: 'excalidraw_add_image',
+      arguments: { path: 'assets/icon.txt' },
+    })
+    expect(unsupported.isError).toBe(true)
+    expect((unsupported.content as { text: string }[])[0]!.text).toContain('unsupported image type')
+
+    const outside = await client.callTool({
+      name: 'excalidraw_add_image',
+      arguments: { path: '../outside.png' },
+    })
+    expect(outside.isError).toBe(true)
+    expect((outside.content as { text: string }[])[0]!.text).toContain('inside the workspace')
+    await client.close()
+  })
+
+  it('describes the canvas with ids, geometry and labels', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    await client.callTool({
+      name: 'excalidraw_element_create',
+      arguments: {
+        drawing: 'desc',
+        elements: [
+          {
+            id: 'card', type: 'rectangle', x: 20, y: 30, width: 200, height: 100,
+            boundElements: [{ type: 'text', id: 'card-label' }],
+          },
+          { id: 'card-label', type: 'text', x: 60, y: 60, width: 80, height: 20, text: 'Hello', containerId: 'card' },
+        ],
+      },
+    })
+    const read = payload(await client.callTool({
+      name: 'excalidraw_get_drawing',
+      arguments: { drawing: 'desc' },
+    }))
+    const description = read['description'] as string
+    expect(description).toContain('Drawing "desc": 2 visible elements')
+    expect(description).toContain('rectangle id=card at (20,30) size 200x100')
+    expect(description).toContain('label "Hello"')
+    expect(description).toContain('text id=card-label')
+    expect(description).toContain('label of card')
+    await client.close()
+  })
+
+  withChrome('returns a PNG screenshot as an image content block', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: { elements: [{ type: 'rectangle', x: 0, y: 0, width: 120, height: 60, backgroundColor: '#ffc9c9' }] },
+    })
+
+    const result = await client.callTool({
+      name: 'excalidraw_screenshot',
+      arguments: { path: 'shots/board.png' },
+    })
+    expect(result.isError).toBeFalsy()
+    const content = result.content as { type: string; text?: string; data?: string; mimeType?: string }[]
+    const meta = JSON.parse(content[0]!.text!) as Record<string, unknown>
+    expect(meta).toMatchObject({
+      ok: true,
+      drawing: 'default',
+      path: join(root, 'shots', 'board.png'),
+      image: 'attached',
+    })
+    expect(meta['width']).toBeGreaterThan(0)
+    expect(content[1]).toMatchObject({ type: 'image', mimeType: 'image/png' })
+    const png = Buffer.from(content[1]!.data!, 'base64')
+    expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+    const written = await readFile(String(meta['path']))
+    expect(written.equals(png)).toBe(true)
     await client.close()
   })
 })
