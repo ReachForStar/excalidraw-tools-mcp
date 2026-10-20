@@ -50,11 +50,20 @@ jobs:
       - name: Pack tarball
         run: pnpm pack
 
+      - name: Prepare release notes
+        run: |
+          note="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$note" ]; then
+            cp "$note" release-notes.md
+          else
+            printf '# %s\n\n本版本没有单独的发布说明，变更见提交记录。\n' "$GITHUB_REF_NAME" > release-notes.md
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          body_path: release-notes.md
           files: reachforstar-excalidraw-tools-*.tgz
-          generate_release_notes: true
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
