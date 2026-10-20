@@ -60,3 +60,11 @@
 - `excalidraw_read` / `get_drawing` 新增 `description`；删除元素时清理绑定文本与箭头绑定。
 - 新增测试覆盖图形 CRUD、元素 CRUD、布局、图片、描述与截图，共 49 项通过；版本号按发布指令保持不变。
 - 新增决策页 `decisions/multi-drawing-storage.md`、`decisions/canvas-tools-surface.md`；更新实体页与 README。
+
+## [2026-10-20] chore | 部署 MCP 到 mcp.togithub.icu
+- 远程单租户部署：`excalidraw-mcp.service` 监听 `127.0.0.1:7801`，独立 `excalidraw-proxy.service` 监听 80/443；系统 Nginx 保持 disable。
+- 包安装在 `/opt/excalidraw-tools`，工作区 `/srv/excalidraw/workspace`，运行用户 `excalidraw`，Chrome 155 用于 PNG/截图。
+- 证书改用 DNS-01（境外访问被禁用，HTTP-01 超时），当前有效期至 2027-01-18；续期需人工添加 TXT 或后续接入阿里云 DNS API。
+- 验证通过：GET 405、无 token 401、18 个工具、draw/read/export/screenshot 均成功。
+- 记录遗留问题：bin 符号链接入口静默退出、证书续期需人工、工作区保留验证文件。
+- 新增 `queries/deploy-mcp-togithub.md`，更新 index 与实体页链接。

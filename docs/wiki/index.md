@@ -27,3 +27,4 @@ updated: 2026-10-20
 ## 查询沉淀 queries
 
 - [SVG 导出透明度单位与容器标签丢失](queries/svg-export-opacity-and-labels.md) — 0–100 与 0–1 单位混用导致形状近透明；容器文字需绑定文本元素（现仅影响预览渲染）。
+- [部署 MCP 到 mcp.togithub.icu](queries/deploy-mcp-togithub.md) — 单租户公网部署：独立 Nginx、systemd、Chrome、DNS-01 证书、验证结果与续期注意事项。
