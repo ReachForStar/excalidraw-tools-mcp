@@ -17,3 +17,9 @@
 - 修复 SVG 导出透明度单位错误；容器形状带 `text` 生成绑定文本元素。
 - 新增测试：MCP 内存传输、HTTP 与鉴权、CLI 参数，共 27 项通过。
 - 新增 wiki：entities/excalidraw-mcp-server.md、decisions/mcp-transports.md、queries/svg-export-opacity-and-labels.md。
+
+## [2026-10-20] feat | 场景路径固定为 .agents 并取消写入大小上限
+- `SCENE_RELATIVE` 改为 `.agents/excalidraw/scene.json`，导出默认 `.agents/excalidraw/export.svg`；同工作区所有 agent 共用一个画布。
+- 移除 `WRITE_SCENE_MAX_BYTES` 与写入体积校验；`excalidraw_read` 的 128 KB 回显上限保留。
+- 新增测试：默认路径解析、导出默认路径、1.3 MB 场景写入与超大回显省略。
+- 版本提升到 0.3.1；README 与实体页同步。

@@ -4,8 +4,9 @@
  * framework imports here, so the MCP entry can run standalone.
  *
  * A scene is the object Excalidraw persists (`{ elements, appState, files? }`).
- * The tools keep it in a workspace-scoped file (`SCENE_RELATIVE`) and never let
- * a caller-supplied path leave that workspace.
+ * Every agent reads and writes the same workspace file
+ * (`<workspace>/.agents/excalidraw/scene.json`), and a caller-supplied export
+ * path can never leave the workspace.
  * @module excalidraw-mcp/scene
  */
 
@@ -13,13 +14,17 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
-/** Relative scene file inside a workspace (shared with the web `/scene` routes). */
-export const SCENE_RELATIVE = join('.dsh', 'excalidraw', 'scene.json')
+/** Fixed scene directory shared by every agent in a workspace. */
+export const SCENE_DIRECTORY = join('.agents', 'excalidraw')
+
+/** Relative scene file inside a workspace. */
+export const SCENE_RELATIVE = join(SCENE_DIRECTORY, 'scene.json')
+
+/** Default SVG export path inside a workspace. */
+export const DEFAULT_EXPORT_RELATIVE = join(SCENE_DIRECTORY, 'export.svg')
 
 /** Cap for the full scene JSON echoed back to the caller (keeps context sane). */
 export const READ_FULL_JSON_MAX_BYTES = 128 * 1024
-/** Cap for a caller-supplied scene write. */
-export const WRITE_SCENE_MAX_BYTES = 1024 * 1024
 /** Cap for the number of elements a single draw call may add. */
 export const DRAW_MAX_ELEMENTS = 256
 /** Upper bound on the preview SVG embedded in a tool result (64 KiB). */
@@ -121,7 +126,9 @@ export const DRAWABLE_TYPES = new Set(['rectangle', 'ellipse', 'diamond', 'text'
 export function sceneTarget(workspace: string, sceneOverride?: string): SceneTarget {
   const root = resolve(workspace)
   const override = sceneOverride?.trim()
-  if (override === undefined || override.length === 0) return { workspace: root, scenePath: join(root, SCENE_RELATIVE) }
+  if (override === undefined || override.length === 0) {
+    return { workspace: root, scenePath: join(root, SCENE_RELATIVE) }
+  }
   return { workspace: root, scenePath: isAbsolute(override) ? override : join(root, override) }
 }
 
@@ -667,7 +674,8 @@ export async function readScene(target: SceneTarget): Promise<ReadResult> {
 /**
  * Overwrite the target scene from a complete scene JSON string, repairing
  * malformed elements before persistence so the canvas never receives a scene it
- * crashes on (same normalization the web `/scene` routes apply).
+ * crashes on (same normalization the web `/scene` routes apply). Scene size is
+ * not capped: the canvas may legitimately grow without bound.
  * @param target - resolved scene target.
  * @param sceneJson - complete scene JSON (`{ elements, appState }`).
  * @returns the mutation result with an optional preview SVG.
@@ -675,9 +683,6 @@ export async function readScene(target: SceneTarget): Promise<ReadResult> {
 export async function writeScene(target: SceneTarget, sceneJson: string): Promise<MutationResult> {
   if (sceneJson.length === 0) {
     throw new Error('excalidraw_write: `scene` must be a non-empty JSON string')
-  }
-  if (sceneJson.length > WRITE_SCENE_MAX_BYTES) {
-    throw new Error(`excalidraw_write: scene exceeds the ${WRITE_SCENE_MAX_BYTES} byte cap`)
   }
   let parsed: unknown
   try {
@@ -822,7 +827,7 @@ export async function exportScene(
   // error regardless of whether a scene exists yet.
   const abs = resolveExportPath(
     target.workspace,
-    relPath !== undefined && relPath.length > 0 ? relPath : join('.dsh', 'excalidraw', 'export.svg'),
+    relPath !== undefined && relPath.length > 0 ? relPath : DEFAULT_EXPORT_RELATIVE,
   )
   let text: string
   try {
