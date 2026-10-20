@@ -74,3 +74,9 @@
 - 新增 `tests/mcp-entry.spec.ts`，覆盖符号链接、真实路径、缺失路径与无关路径；测试 52 项通过。
 - 重新打包部署到 `/opt/excalidraw-tools`；systemd 改用 `bin/excalidraw-mcp`，远程 `--version` 与工具调用验证通过。
 - 更新部署页与实体页，移除 bin 遗留问题。
+
+## [2026-10-20] chore | 新增 CI 与 Release 工作流
+- 新增 `.github/workflows/ci.yml`：push/PR 执行 typecheck、52 项测试、构建与 `pnpm pack`，上传 tarball artifact。
+- 新增 `.github/workflows/release.yml`：推送 `v*` tag 后重新验证，读取 `docs/releases/<tag>.md` 发布说明并上传 tarball 到 GitHub Release。
+- `develop` CI run `39434107935` 通过；README 增加 CI 徽章与 Release 下载说明。
+- 新增 `queries/ci-release.md`，更新 index。
