@@ -27,3 +27,7 @@
 ## [2026-10-20] chore | 包名改为 @reachforstar/dsh-tool-excalidraw
 - 包名与 cordis 插件名去掉 `-copy` 后缀：`@reachforstar/dsh-tool-excalidraw`、`tool-excalidraw`。
 - README 与模块注释同步；构建产物与 `excalidraw-mcp` bin 不变。
+
+## [2026-10-20] chore | 包名改为 @reachforstar/excalidraw-tools
+- 包名由 `@reachforstar/dsh-tool-excalidraw` 改为 `@reachforstar/excalidraw-tools`，与仓库目录名一致。
+- cordis 插件名保持 `tool-excalidraw`，MCP 服务名 `excalidraw-mcp` 与 bin 名不变。

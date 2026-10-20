@@ -10,7 +10,7 @@
  *
  * The target workspace comes from the calling agent's session; a non-agent
  * caller has no owning workspace and is rejected.
- * @module @reachforstar/dsh-tool-excalidraw
+ * @module @reachforstar/excalidraw-tools
  */
 
 import type { Context } from '@deepseek-ai/cordis'
