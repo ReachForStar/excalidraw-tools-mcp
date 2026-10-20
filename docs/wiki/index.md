@@ -10,7 +10,7 @@ updated: 2026-10-20
 
 ## 实体 entities
 
-- [Excalidraw MCP 服务](entities/excalidraw-mcp-server.md) — MCP（stdio + Streamable HTTP）与 cordis 插件共用的场景工具（读取、写入、导入、绘制、导出），核心在 `src/scene.ts`。
+- [Excalidraw MCP 服务](entities/excalidraw-mcp-server.md) — MCP（stdio + Streamable HTTP）与 cordis 插件共用的画布工具（场景、多图形、元素、布局、图片、截图、导出），核心在 `src/scene.ts`、`src/elements.ts`、`src/drawings.ts`。
 
 ## 概念 concepts
 
@@ -21,6 +21,8 @@ updated: 2026-10-20
 - [分支模型与开发流程](decisions/branch-model.md) — `master` + `develop` 两层分支，功能分支按需切出并合回。
 - [MCP 传输选择](decisions/mcp-transports.md) — 默认 stdio，HTTP 采用无状态 Streamable HTTP。
 - [导出渲染器选择](decisions/export-renderer.md) — 导出改用 Excalidraw 官方实现，在本机无头 Chrome 中渲染 SVG/PNG。
+- [多图形存储与命名规则](decisions/multi-drawing-storage.md) — 默认图形沿用 `scene.json`，命名图形存 `drawings/<id>.json`，严格校验 id 与默认导出路径。
+- [元素级工具面与布局语义](decisions/canvas-tools-surface.md) — 按功能拆成 18 个工具；元素补丁、布局选区扩展、图片嵌入与截图返回形态。
 
 ## 查询沉淀 queries
 
