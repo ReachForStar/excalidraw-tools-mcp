@@ -29,3 +29,4 @@ updated: 2026-10-20
 - [SVG 导出透明度单位与容器标签丢失](queries/svg-export-opacity-and-labels.md) — 0–100 与 0–1 单位混用导致形状近透明；容器文字需绑定文本元素（现仅影响预览渲染）。
 - [部署 MCP 到 mcp.togithub.icu](queries/deploy-mcp-togithub.md) — 单租户公网部署：独立 Nginx、systemd、Chrome、DNS-01 证书、验证结果与续期注意事项。
 - [CI 与 GitHub Release 流程](queries/ci-release.md) — push/PR 验证 typecheck、test、build、pack；`v*` tag 自动发布说明与 tarball。
+- [在四个客户端注册 Excalidraw MCP](queries/mcp-clients-install.md) — Pi、Codex、Claude Code、OpenCode 的远程配置、代理绕过与验证结果。
