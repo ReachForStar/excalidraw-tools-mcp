@@ -23,3 +23,7 @@
 - 移除 `WRITE_SCENE_MAX_BYTES` 与写入体积校验；`excalidraw_read` 的 128 KB 回显上限保留。
 - 新增测试：默认路径解析、导出默认路径、1.3 MB 场景写入与超大回显省略。
 - 版本提升到 0.3.1；README 与实体页同步。
+
+## [2026-10-20] chore | 包名改为 @reachforstar/dsh-tool-excalidraw
+- 包名与 cordis 插件名去掉 `-copy` 后缀：`@reachforstar/dsh-tool-excalidraw`、`tool-excalidraw`。
+- README 与模块注释同步；构建产物与 `excalidraw-mcp` bin 不变。

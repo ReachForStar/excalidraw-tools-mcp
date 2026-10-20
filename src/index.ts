@@ -10,7 +10,7 @@
  *
  * The target workspace comes from the calling agent's session; a non-agent
  * caller has no owning workspace and is rejected.
- * @module @reachforstar/dsh-tool-excalidraw-copy
+ * @module @reachforstar/dsh-tool-excalidraw
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -37,7 +37,7 @@ export {
 } from './scene.js'
 
 /** Cordis plugin name used by loader diagnostics. */
-export const name = 'tool-excalidraw-copy'
+export const name = 'tool-excalidraw'
 
 /** Services required by the Excalidraw scene tools. */
 export const inject = ['tools']
