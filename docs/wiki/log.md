@@ -51,3 +51,12 @@
 - `excalidraw_draw` 读写时保留场景已有的 `files`，追加形状不再丢失嵌入图片。
 - 导出/导入共用 `resolveWorkspacePath` 做越界校验；MCP 与 cordis 插件同步新增第五个工具。
 - 测试增至 39 项（含原生文件往返、图片保留、错误分支）；版本 0.6.0。
+
+## [2026-10-20] feat | 新增多图形、元素、布局、图片与截图工具
+- 新增 `src/elements.ts`（元素增删改查、对齐/分布/分组/锁定/复制、图片插入）与 `src/drawings.ts`（图形管理）。
+- `src/scene.ts` 增加图形目标解析、`loadSceneParts`/`saveSceneParts`、画布描述、截图与按图形区分的默认导出路径。
+- 工具从 5 个扩展到 18 个：场景 5、图形管理 6、元素 4、布局 1、媒体 2；MCP 与 cordis 插件按功能拆分模块。
+- `excalidraw_screenshot` 在 MCP 返回文本元数据加 `image/png` 内容块；`excalidraw_add_image` 用 `image-size` 读尺寸并写入场景 `files`。
+- `excalidraw_read` / `get_drawing` 新增 `description`；删除元素时清理绑定文本与箭头绑定。
+- 新增测试覆盖图形 CRUD、元素 CRUD、布局、图片、描述与截图，共 49 项通过；版本号按发布指令保持不变。
+- 新增决策页 `decisions/multi-drawing-storage.md`、`decisions/canvas-tools-surface.md`；更新实体页与 README。
