@@ -30,7 +30,7 @@ const INSTRUCTIONS =
   + 'workspace scene.'
 
 /**
- * Create an MCP server exposing the scene tools.
+ * Create an MCP server exposing the Excalidraw canvas tools.
  * @param scope - workspace roots the tools may operate on; the first is the default.
  * @returns a server ready to connect to a transport.
  */
