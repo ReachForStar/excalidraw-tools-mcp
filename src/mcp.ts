@@ -5,7 +5,9 @@
  *
  * Configuration comes from flags or environment variables so the same binary
  * works for one-shot `npx` runs and for long-lived HTTP deployments:
- *   --workspace / EXCALIDRAW_WORKSPACE  workspace root that bounds exports
+ *   --workspace / EXCALIDRAW_WORKSPACE  workspace root; repeat the flag (or join
+ *                                       with the OS path delimiter in the env)
+ *                                       to serve several workspaces
  *   --scene / EXCALIDRAW_SCENE          scene file (default `.agents/excalidraw/scene.json`)
  *   --transport http | --http           switch to Streamable HTTP
  *   --host / EXCALIDRAW_MCP_HOST        bind address (default 127.0.0.1)
@@ -15,17 +17,18 @@
  */
 
 import { stat } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { delimiter, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { SCENE_RELATIVE, sceneTarget, type SceneTarget } from './scene.js'
+import { SCENE_RELATIVE, workspaceScope, type WorkspaceScope } from './scene.js'
 import { startHttpServer } from './mcp/http.js'
 import { PACKAGE_NAME, PACKAGE_VERSION, createMcpServer } from './mcp/server.js'
 
 /** Parsed command line. */
 export interface CliOptions {
   transport: 'stdio' | 'http'
-  workspace: string
+  /** Workspace roots; the first one is the default target of tool calls. */
+  workspaces: string[]
   scene?: string
   host: string
   port: number
@@ -48,8 +51,10 @@ Excalidraw scene tools over the Model Context Protocol.
 
 Options:
   -w, --workspace <dir>   Workspace root; exports stay inside it (default: cwd).
+                          Repeat the flag to serve several workspaces; every
+                          tool call then names its workspace.
       --scene <path>      Scene file, absolute or workspace-relative
-                          (default: ${SCENE_RELATIVE}).
+                          (default: ${SCENE_RELATIVE}); single-workspace only.
       --http              Serve Streamable HTTP instead of stdio.
       --transport <name>  "stdio" (default) or "http".
       --host <host>       HTTP bind address (default: 127.0.0.1).
@@ -58,8 +63,9 @@ Options:
   -h, --help              Show this help.
   -v, --version           Print the package version.
 
-Environment: EXCALIDRAW_WORKSPACE, EXCALIDRAW_SCENE, EXCALIDRAW_MCP_HOST,
-EXCALIDRAW_MCP_PORT, EXCALIDRAW_MCP_TOKEN.
+Environment: EXCALIDRAW_WORKSPACE (several roots joined by the OS path
+delimiter), EXCALIDRAW_SCENE, EXCALIDRAW_MCP_HOST, EXCALIDRAW_MCP_PORT,
+EXCALIDRAW_MCP_TOKEN.
 `
 
 /** Read the value that follows a flag. */
@@ -85,7 +91,12 @@ function integerOf(raw: string, flag: string): number {
  */
 export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
   let transport: 'stdio' | 'http' = 'stdio'
-  let workspace = env['EXCALIDRAW_WORKSPACE'] ?? process.cwd()
+  const envWorkspaces = env['EXCALIDRAW_WORKSPACE']
+  let workspaces = envWorkspaces === undefined
+    ? [process.cwd()]
+    : envWorkspaces.split(delimiter).filter(entry => entry.length > 0)
+  // The first `-w` replaces the implicit cwd instead of adding to it.
+  let explicitWorkspace = envWorkspaces !== undefined
   let scene = env['EXCALIDRAW_SCENE']
   let host = env['EXCALIDRAW_MCP_HOST'] ?? '127.0.0.1'
   let port = integerOf(env['EXCALIDRAW_MCP_PORT'] ?? '7801', '--port')
@@ -102,7 +113,11 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
         return { kind: 'version' }
       case '-w':
       case '--workspace':
-        workspace = valueAfter(argv, i, arg)
+        if (!explicitWorkspace) {
+          workspaces = []
+          explicitWorkspace = true
+        }
+        workspaces.push(valueAfter(argv, i, arg))
         i += 1
         break
       case '--scene':
@@ -139,7 +154,7 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     kind: 'run',
     options: {
       transport,
-      workspace,
+      workspaces,
       ...(scene !== undefined && scene.length > 0 ? { scene } : {}),
       host,
       port,
@@ -149,21 +164,30 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
 }
 
 /**
- * Validate that the workspace exists and build the scene target.
- * @param workspace - workspace root from the CLI.
+ * Validate every workspace root and build the server scope.
+ * @param workspaces - workspace roots from the CLI.
  * @param scene - optional scene override.
- * @returns the resolved scene target.
+ * @returns the resolved scope.
  */
-async function resolveTarget(workspace: string, scene?: string): Promise<SceneTarget> {
-  const root = resolve(workspace)
-  let info: Awaited<ReturnType<typeof stat>>
-  try {
-    info = await stat(root)
-  } catch {
-    throw new UsageError(`workspace does not exist: ${root}`)
+async function resolveScope(workspaces: readonly string[], scene?: string): Promise<WorkspaceScope> {
+  if (workspaces.length === 0) throw new UsageError('at least one workspace root is required')
+  const roots: string[] = []
+  for (const workspace of workspaces) {
+    const root = resolve(workspace)
+    let info: Awaited<ReturnType<typeof stat>>
+    try {
+      info = await stat(root)
+    } catch {
+      throw new UsageError(`workspace does not exist: ${root}`)
+    }
+    if (!info.isDirectory()) throw new UsageError(`workspace is not a directory: ${root}`)
+    if (!roots.includes(root)) roots.push(root)
   }
-  if (!info.isDirectory()) throw new UsageError(`workspace is not a directory: ${root}`)
-  return sceneTarget(root, scene)
+  try {
+    return workspaceScope(roots, scene)
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error))
+  }
 }
 
 /** A started server. */
@@ -178,16 +202,16 @@ export interface RunningServer {
  * @returns the close function, plus the URL when serving HTTP.
  */
 export async function serve(options: CliOptions): Promise<RunningServer> {
-  const target = await resolveTarget(options.workspace, options.scene)
+  const scope = await resolveScope(options.workspaces, options.scene)
   // stderr only: stdout is the stdio protocol channel.
-  process.stderr.write(`excalidraw-mcp: workspace ${target.workspace}, scene ${target.scenePath}\n`)
+  process.stderr.write(`excalidraw-mcp: workspaces ${scope.roots.join(', ')}\n`)
   if (options.transport === 'stdio') {
-    const server = createMcpServer(target)
+    const server = createMcpServer(scope)
     await server.connect(new StdioServerTransport())
     return { close: () => server.close() }
   }
   const running = await startHttpServer({
-    target,
+    scope,
     host: options.host,
     port: options.port,
     ...(options.token !== undefined ? { token: options.token } : {}),

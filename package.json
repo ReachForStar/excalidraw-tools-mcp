@@ -1,7 +1,7 @@
 {
   "name": "@reachforstar/excalidraw-tools",
   "description": "Excalidraw scene tools over the MCP (stdio + Streamable HTTP) and as a cordis plugin: read, write, draw, export",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "publishConfig": {
     "access": "public"
   },

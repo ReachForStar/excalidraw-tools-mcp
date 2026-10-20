@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createMcpServer } from '../src/mcp/server.ts'
-import { SCENE_RELATIVE, sceneTarget } from '../src/scene.ts'
+import { SCENE_RELATIVE, sceneTarget, workspaceScope } from '../src/scene.ts'
 
 const workspaces: string[] = []
 // Project-local scratch root: tests must not write to the system temp directory.
@@ -19,8 +19,9 @@ async function workspace(): Promise<string> {
 }
 
 /** Connected client talking to a server over the in-memory transport pair. */
-async function connect(root: string): Promise<Client> {
-  const server = createMcpServer(sceneTarget(root))
+async function connect(root: string | string[]): Promise<Client> {
+  const roots = Array.isArray(root) ? root : [root]
+  const server = createMcpServer(workspaceScope(roots))
   const client = new Client({ name: 'test-client', version: '0.0.0' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
@@ -169,6 +170,55 @@ describe('excalidraw MCP tools', () => {
     const exported = payload(await client.callTool({ name: 'excalidraw_export', arguments: {} }))
     expect(exported['path']).toBe(join(root, '.agents', 'excalidraw', 'export.svg'))
     expect(JSON.parse(await readFile(join(root, SCENE_RELATIVE), 'utf8'))).toHaveProperty('elements')
+    await client.close()
+  })
+
+  it('serves several workspaces from one server', async () => {
+    const first = await workspace()
+    const second = await workspace()
+    const client = await connect([first, second])
+
+    const shape = { type: 'rectangle', x: 0, y: 0, width: 10, height: 10 }
+    expect(payload(await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: { elements: [shape], workspace: second },
+    }))).toMatchObject({ ok: true, added: 1, totalElements: 1 })
+
+    expect(payload(await client.callTool({ name: 'excalidraw_read', arguments: {} })))
+      .toMatchObject({ exists: false })
+    expect(payload(await client.callTool({
+      name: 'excalidraw_read',
+      arguments: { workspace: second },
+    }))).toMatchObject({ exists: true })
+
+    // A relative workspace resolves against the default root.
+    const nested = join(first, 'nested')
+    await mkdir(nested, { recursive: true })
+    expect(payload(await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: { elements: [shape], workspace: 'nested' },
+    }))).toMatchObject({ ok: true })
+    await client.close()
+  })
+
+  it('rejects a workspace outside the allowed roots', async () => {
+    const root = await workspace()
+    const outside = await workspace()
+    const client = await connect(root)
+
+    const escaped = await client.callTool({
+      name: 'excalidraw_read',
+      arguments: { workspace: outside },
+    })
+    expect(escaped.isError).toBe(true)
+    expect((escaped.content as { text: string }[])[0]!.text).toContain('outside the allowed roots')
+
+    const missing = await client.callTool({
+      name: 'excalidraw_read',
+      arguments: { workspace: join(root, 'nope') },
+    })
+    expect(missing.isError).toBe(true)
+    expect((missing.content as { text: string }[])[0]!.text).toContain('does not exist')
     await client.close()
   })
 
