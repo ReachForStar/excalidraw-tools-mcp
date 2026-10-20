@@ -1,9 +1,12 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, for example v0.1.0'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,9 +14,24 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Validate version
+        run: |
+          if ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+            echo "::error::version must look like v0.1.0"
+            exit 1
+          fi
+
+          package_version="$(jq -r '.version' package.json)"
+          if [ "$VERSION" != "v$package_version" ]; then
+            echo "::error::input $VERSION does not match package.json version v$package_version"
+            exit 1
+          fi
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -52,16 +70,19 @@ jobs:
 
       - name: Prepare release notes
         run: |
-          note="docs/releases/${GITHUB_REF_NAME}.md"
+          note="docs/releases/${VERSION}.md"
           if [ -f "$note" ]; then
             cp "$note" release-notes.md
           else
-            printf '# %s\n\n本版本没有单独的发布说明，变更见提交记录。\n' "$GITHUB_REF_NAME" > release-notes.md
+            printf '# %s\n\n本版本没有单独的发布说明，变更见提交记录。\n' "$VERSION" > release-notes.md
           fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ inputs.version }}
           body_path: release-notes.md
           files: reachforstar-excalidraw-tools-*.tgz
           fail_on_unmatched_files: true

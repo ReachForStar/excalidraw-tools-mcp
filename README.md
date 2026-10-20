@@ -396,7 +396,7 @@ pnpm run build
 
 `tests/` 覆盖工具注册、场景读写、多图形增删改查、元素增删改查、布局、图片插入、形状展开、路径越界、截图、HTTP 鉴权、CLI 参数与符号链接入口识别，共 52 项。
 
-CI 在 push 和 pull request 时执行 typecheck、test、build 与 `pnpm pack`；推送 `v*` tag 时，Release workflow 重新验证并将 tarball 附加到 GitHub Release。
+CI 在 push 和 pull request 时执行 typecheck、test、build 与 `pnpm pack`。发布新版本时，在 Actions 中手动运行 Release 工作流并填写与 `package.json` 一致的版本号（如 `v0.1.0`），验证通过后创建 GitHub Release 并附加 tarball。
 
 <a id="known-limitations"></a>
 ## 已知限制
