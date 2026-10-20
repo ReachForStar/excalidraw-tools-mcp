@@ -119,6 +119,18 @@ systemctl reload excalidraw-proxy
 certbot renew
 ```
 
+## 导出文件的落地位置
+
+远程服务的所有写入（`excalidraw_export`、`excalidraw_screenshot`、`excalidraw_export_to_json`）都相对服务器工作区 `/srv/excalidraw/workspace` 解析，`path` 参数只能用工作区内相对路径。工具返回值里的 `path` 是服务器绝对路径，本机 `ls` 该路径为 `No such file or directory`。`excalidraw_screenshot` 例外：它在结果中附带 `image/png` 图片内容，可直接查看；`excalidraw_export` 只返回元数据。
+
+需要把导出图交到本地时，两条路径：
+
+1. 用 `excalidraw_screenshot` 拿内联 PNG，再落盘。
+2. 本地跑本仓库构建产物，工作区指向项目目录：`sceneTarget('<项目根>')` → `drawScene` → `exportScene`（`format: 'png'`、`scale` 0.5–4）。渲染器 `src/render.ts` 用 `playwright-core` 驱动本机 Chrome，无需远程服务。验证过 `node lib/mcp.js --version` 与 `/usr/bin/google-chrome` 可用。
+
+远程工作区是共享画布：`excalidraw_draw` 的 `action: "replace"` 会清空他人留下的元素。改远程画布前先 `excalidraw_read`，用完恢复原状。
+
+
 ## 遗留问题
 
 - 证书自动续期需要人工配合添加 TXT；可改为阿里云 DNS API 自动续期。

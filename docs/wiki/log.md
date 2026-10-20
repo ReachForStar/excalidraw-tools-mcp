@@ -94,3 +94,9 @@
 - 卸载此前为验证 Release 安装的全局包，移除 `excalidraw-mcp` 命令。
 - 新增 `queries/mcp-clients-install.md`，更新部署页与 index。
 - `develop` Test run `39438655744` 与 `master` run `39438685151` 均通过。
+
+## [2026-10-20] query | 绘制 Hello World 并导出 PNG
+- 用远程 MCP 的 `excalidraw_draw` 与 `excalidraw_export` 试过：导出成功但文件落在服务器 `/srv/excalidraw/workspace/hello-world.png`，本地不可取；远程默认画布被 `replace` 清空后已恢复为原有两个元素。
+- 改用本仓库构建产物本地生成：`tmp/gen-hello.mjs` 调 `sceneTarget('tmp/ws')` → `drawScene` → `exportScene`，`format: 'png'`、`scale: 2`，产物 1400×360、33247 字节，拷到 `out/hello-world.png`。
+- 验证：`image-size` 确认 PNG 尺寸；ImageMagick 唯一色列表包含文字色 `#1e1e1e`、边框色 `#1971c2` 与浅蓝填充，手绘纹理正常。
+- 部署页新增「导出文件的落地位置」一节：远程写入路径与本地两条取图路径，及共享画布慎用 `replace` 的注意事项。
