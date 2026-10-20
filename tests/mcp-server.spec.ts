@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -49,12 +49,13 @@ afterAll(async () => {
 })
 
 describe('excalidraw MCP tools', () => {
-  it('lists the four scene tools with input schemas', async () => {
+  it('lists the five scene tools with input schemas', async () => {
     const client = await connect(await workspace())
     const { tools } = await client.listTools()
     expect(tools.map(tool => tool.name).sort()).toEqual([
       'excalidraw_draw',
       'excalidraw_export',
+      'excalidraw_import',
       'excalidraw_read',
       'excalidraw_write',
     ])
@@ -131,6 +132,128 @@ describe('excalidraw MCP tools', () => {
     expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
     expect(png.readUInt32BE(16)).toBe(exported['width'])
     expect(png.readUInt32BE(20)).toBe(exported['height'])
+    await client.close()
+  })
+
+  it('exports a native .excalidraw file and imports it back', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: {
+        elements: [
+          { type: 'rectangle', x: 0, y: 0, width: 100, height: 50, backgroundColor: '#ffc9c9' },
+          { type: 'text', x: 0, y: 60, width: 120, height: 30, text: 'native' },
+        ],
+      },
+    })
+
+    const exported = payload(await client.callTool({
+      name: 'excalidraw_export',
+      arguments: { format: 'excalidraw' },
+    }))
+    expect(exported).toMatchObject({ ok: true, format: 'excalidraw', elementCount: 2 })
+    expect(exported['path']).toBe(join(root, '.agents', 'excalidraw', 'export.excalidraw'))
+    expect(exported['width']).toBeUndefined()
+    const file = JSON.parse(await readFile(String(exported['path']), 'utf8')) as {
+      type: string
+      version: number
+      source: string
+      elements: { id: string }[]
+      appState: Record<string, unknown>
+    }
+    expect(file.type).toBe('excalidraw')
+    expect(file.version).toBe(2)
+    expect(file.source).toContain('github.com')
+    expect(file.elements).toHaveLength(2)
+    expect(file.appState).toHaveProperty('gridSize')
+    expect(typeof file.appState['viewBackgroundColor']).toBe('string')
+
+    // Replace the canvas, then restore it from the exported file.
+    await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: {
+        elements: [{ type: 'ellipse', x: 0, y: 0, width: 10, height: 10 }],
+        action: 'replace',
+      },
+    })
+    const replaced = payload(await client.callTool({ name: 'excalidraw_read', arguments: {} }))
+    expect((replaced['summary'] as { elementCount: number }).elementCount).toBe(1)
+
+    const imported = payload(await client.callTool({
+      name: 'excalidraw_import',
+      arguments: { path: '.agents/excalidraw/export.excalidraw' },
+    }))
+    expect(imported).toMatchObject({
+      ok: true,
+      elementCount: 2,
+      path: join(root, '.agents', 'excalidraw', 'export.excalidraw'),
+    })
+    expect(imported['bytes']).toBeGreaterThan(0)
+    const restored = payload(await client.callTool({ name: 'excalidraw_read', arguments: {} }))
+    expect((restored['summary'] as { elementCount: number }).elementCount).toBe(2)
+    const onDisk = JSON.parse(await readFile(join(root, SCENE_RELATIVE), 'utf8')) as { elements: { id: string }[] }
+    expect(onDisk.elements.map(element => element.id)).toEqual(file.elements.map(element => element.id))
+    await client.close()
+  })
+
+  it('imports embedded image files and keeps them across draws', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    const document = {
+      type: 'excalidraw',
+      version: 2,
+      source: 'https://excalidraw.com',
+      elements: [
+        { id: 'img', type: 'image', x: 0, y: 0, width: 20, height: 20, fileId: 'file-1', status: 'saved', scale: [1, 1] },
+      ],
+      appState: { viewBackgroundColor: '#ffffff' },
+      files: {
+        'file-1': { id: 'file-1', mimeType: 'image/png', dataURL: 'data:image/png;base64,iVBORw0KGgo=', created: 1 },
+      },
+    }
+    await mkdir(join(root, 'docs'), { recursive: true })
+    await writeFile(join(root, 'docs', 'image.excalidraw'), JSON.stringify(document), 'utf8')
+
+    expect(payload(await client.callTool({
+      name: 'excalidraw_import',
+      arguments: { path: 'docs/image.excalidraw' },
+    }))).toMatchObject({ ok: true, elementCount: 1 })
+
+    await client.callTool({
+      name: 'excalidraw_draw',
+      arguments: { elements: [{ type: 'rectangle', x: 30, y: 0, width: 10, height: 10 }] },
+    })
+    const onDisk = JSON.parse(await readFile(join(root, SCENE_RELATIVE), 'utf8')) as {
+      elements: { type: string }[]
+      files: Record<string, { id: string }>
+    }
+    expect(onDisk.elements).toHaveLength(2)
+    expect(onDisk.files['file-1']).toMatchObject({ id: 'file-1' })
+    await client.close()
+  })
+
+  it('rejects missing, invalid and out-of-workspace imports', async () => {
+    const root = await workspace()
+    const client = await connect(root)
+    const errorOf = async (path: string): Promise<string> => {
+      const result = await client.callTool({ name: 'excalidraw_import', arguments: { path } })
+      expect(result.isError).toBe(true)
+      return (result.content as { text: string }[])[0]!.text
+    }
+
+    expect(await errorOf('nope.excalidraw')).toContain('file not found')
+
+    await writeFile(join(root, 'broken.excalidraw'), '{oops', 'utf8')
+    expect(await errorOf('broken.excalidraw')).toContain('not valid JSON')
+
+    await writeFile(join(root, 'not-scene.json'), '{"hello":1}', 'utf8')
+    expect(await errorOf('not-scene.json')).toContain('no `elements` array')
+
+    await writeFile(join(root, 'library.excalidraw'), JSON.stringify({ type: 'excalidrawlib', libraryItems: [] }), 'utf8')
+    expect(await errorOf('library.excalidraw')).toContain('libraries are not scenes')
+
+    expect(await errorOf('../outside.excalidraw')).toContain('inside the workspace')
     await client.close()
   })
 

@@ -1,12 +1,13 @@
 /**
- * Cordis plugin mounting the four Excalidraw scene tools into a host's tool
+ * Cordis plugin mounting the five Excalidraw scene tools into a host's tool
  * registry. The scene logic lives in `./scene.ts` and is shared with the MCP
  * server (`src/mcp.ts`), which serves the same tools to any MCP client.
  *
  *  - `excalidraw_read`   → scene summary + full JSON when the file is small.
  *  - `excalidraw_write`  → overwrite the workspace scene from a JSON string.
+ *  - `excalidraw_import` → replace the scene with a `.excalidraw` file.
  *  - `excalidraw_draw`   → add/replace shapes from a high-level description.
- *  - `excalidraw_export` → write the scene as an SVG file in the workspace.
+ *  - `excalidraw_export` → write the scene as SVG, PNG or `.excalidraw`.
  *
  * The target workspace comes from the calling agent's session; a non-agent
  * caller has no owning workspace and is rejected.
@@ -23,12 +24,14 @@ import {
   DEFAULT_EXPORT_RELATIVE,
   drawScene,
   exportScene,
+  importScene,
   readScene,
   sceneTarget,
   writeScene,
 } from './scene.js'
 
 export {
+  DEFAULT_EXPORT_FILE_RELATIVE,
   DEFAULT_EXPORT_RELATIVE,
   DRAW_MAX_ELEMENTS,
   SCENE_RELATIVE,
@@ -61,7 +64,7 @@ function targetOf(
 }
 
 /**
- * Register the four Excalidraw scene tools into the composed tool registry.
+ * Register the five Excalidraw scene tools into the composed tool registry.
  * @param ctx - Host context with the tools and workspaceRegistry services.
  */
 export function apply(ctx: Context): void {
@@ -249,24 +252,20 @@ export function apply(ctx: Context): void {
         rawInput: `${(args as { elements?: unknown[] }).elements?.length ?? 0} shapes`,
       }),
     }))
-    const disposeExport = ctx.tools.register(defineTool({
-      name: 'excalidraw_export',
+    const disposeImport = ctx.tools.register(defineTool({
+      name: 'excalidraw_import',
       description:
-          'Export the current workspace\'s Excalidraw canvas to an SVG image file '
-          + 'in the workspace (pure node-side rendering — no browser needed). Reads '
-          + 'the same scene the canvas tab shows and writes a vector SVG at '
-          + '`<workspace>/<path>` (default `.agents/excalidraw/export.svg`). Use it to '
-          + 'persist a diagram the model drew so it can be viewed, committed, or '
-          + 'converted elsewhere. The SVG uses flat fills/strokes (no hand-drawn '
-          + 'texture); text keeps its content and font size.',
+          'Replace the current workspace\'s Excalidraw canvas with an Excalidraw file '
+          + 'from inside that workspace. Reads `<workspace>/<path>` — a native '
+          + '`.excalidraw` document or any JSON scene with `elements`/`appState` — repairs '
+          + 'malformed elements, keeps embedded image `files`, and writes it as the '
+          + 'workspace scene. Use it to load a diagram without pasting its JSON. Excalidraw '
+          + 'libraries are rejected.',
       parameters: {
         path: {
           type: 'string',
-          description: 'Workspace-relative output path (e.g. "docs/flow.svg"); default ".agents/excalidraw/export.svg".',
-        },
-        transparent: {
-          type: 'boolean',
-          description: 'When true, the SVG has a transparent background; default uses the canvas background color.',
+          required: true,
+          description: 'Workspace-relative path of the file to import (e.g. "docs/flow.excalidraw").',
         },
       },
       output: {
@@ -275,9 +274,72 @@ export function apply(ctx: Context): void {
           additionalProperties: false,
           properties: {
             ok: { type: 'boolean', required: true },
-            path: { type: 'string', required: true, description: 'Absolute path of the written SVG.' },
+            cwd: { type: 'string', required: true, description: 'Workspace directory owning the scene.' },
+            path: { type: 'string', required: true, description: 'Absolute path of the imported file.' },
+            elementCount: { type: 'integer', required: true, description: 'Elements imported into the scene.' },
+            bytes: { type: 'integer', required: true, description: 'Size of the imported file in bytes.' },
+            previewSvg: { type: 'string', description: 'SVG preview of the imported scene for UI display.' },
+          },
+        },
+        render: (_args, value) => {
+          return [{ type: 'text', text: `Imported ${value['elementCount']} elements from ${value['path']}.` }]
+        },
+        presentationMeta: (_args, value) => ({ previewSvg: value['previewSvg'] ?? null }),
+      },
+      execute: async (args, exec) => {
+        const target = targetOf(ctx, exec)
+        if (target === undefined) {
+          throw new Error('excalidraw_import requires an owning agent session in a workspace')
+        }
+        return importScene(target, String(args['path']))
+      },
+      presentCall: args => ({
+        card: 'generic',
+        title: 'Import Excalidraw file',
+        kind: 'other',
+        rawInput: `path: ${String(args['path'])}`,
+      }),
+    }))
+    const disposeExport = ctx.tools.register(defineTool({
+      name: 'excalidraw_export',
+      description:
+          'Export the current workspace\'s Excalidraw canvas to a file inside the '
+          + 'workspace. `format: "svg"` and `"png"` render through Excalidraw\'s own '
+          + 'export pipeline in a local headless Chrome, so hand-drawn texture, embedded '
+          + 'images and wrapped text are preserved; they need Chrome/Chromium on the host. '
+          + '`format: "excalidraw"` writes the native scene file (openable in the Excalidraw '
+          + 'app) and needs no browser. Defaults: `.agents/excalidraw/export.svg`, '
+          + '`export.png` or `export.excalidraw`.',
+      parameters: {
+        path: {
+          type: 'string',
+          description: 'Workspace-relative output path (e.g. "docs/flow.png"); default depends on `format`.',
+        },
+        format: {
+          type: 'string',
+          description: 'Output format: "svg" (default), "png" or "excalidraw".',
+        },
+        scale: {
+          type: 'number',
+          description: 'PNG pixel scale between 0.5 and 4; default 1. Ignored for SVG and .excalidraw.',
+        },
+        transparent: {
+          type: 'boolean',
+          description: 'When true, the image has a transparent background; default uses the canvas background color. Ignored for .excalidraw.',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ok: { type: 'boolean', required: true },
+            path: { type: 'string', required: true, description: 'Absolute path of the written file.' },
+            format: { type: 'string', required: true, description: 'Written format: svg, png or excalidraw.' },
             elementCount: { type: 'integer', required: true, description: 'Elements included in the export.' },
-            bytes: { type: 'integer', required: true, description: 'Size of the written SVG in bytes.' },
+            bytes: { type: 'integer', required: true, description: 'Size of the written file in bytes.' },
+            width: { type: 'integer', description: 'Pixel width of the image; svg and png only.' },
+            height: { type: 'integer', description: 'Pixel height of the image; svg and png only.' },
           },
         },
         render: (_args, value) => {
@@ -289,10 +351,12 @@ export function apply(ctx: Context): void {
         if (target === undefined) {
           throw new Error('excalidraw_export requires an owning agent session in a workspace')
         }
-        const rawPath = (args as { path?: string }).path
+        const raw = args as { path?: string; format?: 'svg' | 'png' | 'excalidraw'; scale?: number; transparent?: boolean }
         return exportScene(target, {
-          ...(rawPath !== undefined ? { path: rawPath } : {}),
-          transparent: (args as { transparent?: boolean }).transparent === true,
+          ...(raw.path !== undefined ? { path: raw.path } : {}),
+          ...(raw.format !== undefined ? { format: raw.format } : {}),
+          ...(raw.scale !== undefined ? { scale: raw.scale } : {}),
+          transparent: raw.transparent === true,
         })
       },
       presentCall: args => ({
@@ -302,7 +366,7 @@ export function apply(ctx: Context): void {
         rawInput: `path: ${(args as { path?: string }).path ?? DEFAULT_EXPORT_RELATIVE}`,
       }),
     }))
-    return () => { disposeRead(); disposeWrite(); disposeDraw(); disposeExport() }
+    return () => { disposeRead(); disposeWrite(); disposeImport(); disposeDraw(); disposeExport() }
   }, 'tool-excalidraw: scene tools')
 }
 

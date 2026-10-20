@@ -42,7 +42,7 @@ describe('excalidraw MCP over Streamable HTTP', () => {
     cleanups.push(() => client.close())
 
     const { tools } = await client.listTools()
-    expect(tools).toHaveLength(4)
+    expect(tools).toHaveLength(5)
     const drawn = await client.callTool({
       name: 'excalidraw_draw',
       arguments: { elements: [{ type: 'ellipse', x: 5, y: 5, width: 40, height: 40 }] },
@@ -67,7 +67,7 @@ describe('excalidraw MCP over Streamable HTTP', () => {
       requestInit: { headers: { authorization: 'Bearer secret-token' } },
     }))
     cleanups.push(() => client.close())
-    expect((await client.listTools()).tools).toHaveLength(4)
+    expect((await client.listTools()).tools).toHaveLength(5)
   })
 
   it('answers unknown paths with 404 and non-POST methods with 405', async () => {

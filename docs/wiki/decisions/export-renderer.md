@@ -48,4 +48,5 @@ Excalidraw 的导出依赖真实 DOM、canvas 文本度量与字体加载：
 - 新增依赖 `@excalidraw/utils`（prod 包约 19 MB，解包约 97 MB）与 `playwright-core`（不下载浏览器）。
 - 导出第一次调用需启动浏览器（约 1–2 秒）；导出测试在没有浏览器的机器上自动跳过。
 - `excalidraw_draw` 的 `previewSvg` 仍用 `sceneToSvg` 平直渲染，保持快速预览；文档已注明它不代表导出结果。
+- `format: "excalidraw"` 只涉及 JSON 序列化，不经过本渲染器：它写出原生场景文件，`appState` 仅保留 `gridSize` 与 `viewBackgroundColor`，与网页版导出一致；因此它不受浏览器依赖影响。
 - 需要继续跟踪 `@excalidraw/utils` 的接口变化：0.1.5 的 `exportToSvg` / `exportToBlob` 已改为 `{ data, config }` 签名，后续版本可能再变。

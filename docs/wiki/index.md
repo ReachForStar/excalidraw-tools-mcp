@@ -10,7 +10,7 @@ updated: 2026-10-20
 
 ## 实体 entities
 
-- [Excalidraw MCP 服务](entities/excalidraw-mcp-server.md) — MCP（stdio + Streamable HTTP）与 cordis 插件共用的场景工具，核心在 `src/scene.ts`。
+- [Excalidraw MCP 服务](entities/excalidraw-mcp-server.md) — MCP（stdio + Streamable HTTP）与 cordis 插件共用的场景工具（读取、写入、导入、绘制、导出），核心在 `src/scene.ts`。
 
 ## 概念 concepts
 

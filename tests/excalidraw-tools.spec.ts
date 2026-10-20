@@ -12,6 +12,8 @@ import type { Context } from '@deepseek-ai/cordis'
 // Export tests need a browser; the rest of the suite runs without one.
 const CHROME = await findChrome().catch(() => undefined)
 const withChrome = it.skipIf(CHROME === undefined)
+// Project-local scratch root: tests must not write to the system temp directory.
+const TEST_ROOT = join(process.cwd(), 'tmp', 'tests')
 
 afterAll(async () => {
   await closeRenderer()
@@ -57,9 +59,15 @@ function execFor(cwd: string) {
 }
 
 describe('excalidraw model tools', () => {
-  it('registers all four tools and unwinds on dispose', () => {
+  it('registers all five tools and unwinds on dispose', () => {
     const b = bench()
-    expect(b.registered.map(entry => entry.name).sort()).toEqual(['excalidraw_draw', 'excalidraw_export', 'excalidraw_read', 'excalidraw_write'])
+    expect(b.registered.map(entry => entry.name).sort()).toEqual([
+      'excalidraw_draw',
+      'excalidraw_export',
+      'excalidraw_import',
+      'excalidraw_read',
+      'excalidraw_write',
+    ])
     b.disposers.forEach(dispose => dispose())
     expect(b.registered).toHaveLength(0)
   })
@@ -241,6 +249,40 @@ describe('excalidraw model tools', () => {
         elements: [{ type: 'rectangle', x: 0, y: 0, width: 1, height: 1 }],
         action: 'clear',
       }, execFor(workspace))).rejects.toThrow('append')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('imports a .excalidraw file and exports the scene back to the same format', async () => {
+    await mkdir(TEST_ROOT, { recursive: true })
+    const workspace = await mkdtemp(join(TEST_ROOT, 'plugin-'))
+    try {
+      const b = bench()
+      const importTool = b.registered.find(entry => entry.name === 'excalidraw_import')!
+      const exportTool = b.registered.find(entry => entry.name === 'excalidraw_export')!
+      const document = {
+        type: 'excalidraw',
+        version: 2,
+        source: 'https://excalidraw.com',
+        elements: [{ id: 'r', type: 'rectangle', x: 0, y: 0, width: 10, height: 10 }],
+        appState: { gridSize: 20, viewBackgroundColor: '#ffc9c9' },
+      }
+      await mkdir(join(workspace, 'docs'), { recursive: true })
+      await writeFile(join(workspace, 'docs', 'in.excalidraw'), JSON.stringify(document), 'utf8')
+
+      const imported = await importTool.definition.execute({ path: 'docs/in.excalidraw' }, execFor(workspace))
+      expect(imported).toMatchObject({ ok: true, elementCount: 1, cwd: workspace })
+
+      const exported = await exportTool.definition.execute(
+        { format: 'excalidraw', path: 'docs/out.excalidraw' },
+        execFor(workspace),
+      )
+      expect(exported).toMatchObject({ ok: true, format: 'excalidraw', elementCount: 1 })
+      const written = JSON.parse(await readFile(join(workspace, 'docs', 'out.excalidraw'), 'utf8')) as {
+        appState: { gridSize: number; viewBackgroundColor: string }
+      }
+      expect(written.appState).toEqual({ gridSize: 20, viewBackgroundColor: '#ffc9c9' })
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }
