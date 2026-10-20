@@ -80,3 +80,16 @@
 - 新增 `.github/workflows/release.yml`：推送 `v*` tag 后重新验证，读取 `docs/releases/<tag>.md` 发布说明并上传 tarball 到 GitHub Release。
 - `develop` CI run `39434107935` 通过；README 增加 CI 徽章与 Release 下载说明。
 - 新增 `queries/ci-release.md`，更新 index。
+
+## [2026-10-20] chore | 发布 v0.1.0
+- CI 工作流显示名称改为 `Test`，push/PR 自动触发；Release 改为 `workflow_dispatch` 手动指定版本触发，不再监听 tag push。
+- `master` Test run `39435310828` 通过；Release run `39435517529` 创建 `v0.1.0`，发布说明与 tarball 已上传。
+- 发布说明文件约定为 `docs/releases/<version>.md`，当前为 `docs/releases/v0.1.0.md`。
+- 清理项目 `tmp/`、根目录临时 tarball 与远程部署临时文件。
+
+## [2026-10-20] chore | 注册 Excalidraw MCP 到四个客户端
+- Pi、Codex、Claude Code、OpenCode 写入远程 Streamable HTTP 配置，统一指向 `https://mcp.togithub.icu/mcp`。
+- Pi 返回 18 个工具；Claude Code 显示已连接；Codex 配置为 `enabled` 与 `streamable_http`；OpenCode 用干净环境临时服务验证为已连接。
+- 本机代理会拦截该国内端点，新增 `NO_PROXY` 到 `.bashrc`、`environment.d` 与 Claude `settings.json`；常驻客户端需重启以读取新环境。
+- 卸载此前为验证 Release 安装的全局包，移除 `excalidraw-mcp` 命令。
+- 新增 `queries/mcp-clients-install.md`，更新部署页与 index。

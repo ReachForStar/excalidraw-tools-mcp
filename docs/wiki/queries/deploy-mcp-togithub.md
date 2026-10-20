@@ -107,6 +107,8 @@ HTTP 站点把其他请求 301 到 HTTPS；`/.well-known/acme-challenge/` 保留
 
 Token 只存放在服务器 `/etc/excalidraw-mcp.env`，不在 wiki 中记录。轮换 token 时修改该文件并执行 `systemctl restart excalidraw-mcp`。
 
+四个本机客户端的配置路径、代理绕过与验证结果见[在四个客户端注册 Excalidraw MCP](mcp-clients-install.md)。
+
 ## 运维命令
 
 ```bash
