@@ -13,6 +13,7 @@
  *   --host / EXCALIDRAW_MCP_HOST        bind address (default 127.0.0.1)
  *   --port / EXCALIDRAW_MCP_PORT        bind port (default 7801, 0 picks a free port)
  *   --token / EXCALIDRAW_MCP_TOKEN      required bearer token for HTTP
+ *   --chrome / EXCALIDRAW_CHROME        Chrome/Chromium used by PNG and SVG export
  * @module excalidraw-mcp/cli
  */
 
@@ -33,6 +34,8 @@ export interface CliOptions {
   host: string
   port: number
   token?: string
+  /** Chrome/Chromium executable for scene export. */
+  chrome?: string
 }
 
 /** Outcome of parsing argv. */
@@ -60,12 +63,14 @@ Options:
       --host <host>       HTTP bind address (default: 127.0.0.1).
       --port <port>       HTTP port, 0 picks a free port (default: 7801).
       --token <token>     Require "Authorization: Bearer <token>" on HTTP.
+      --chrome <path>     Chrome/Chromium executable used to render SVG and PNG
+                          exports (default: auto-detect, or EXCALIDRAW_CHROME).
   -h, --help              Show this help.
   -v, --version           Print the package version.
 
 Environment: EXCALIDRAW_WORKSPACE (several roots joined by the OS path
 delimiter), EXCALIDRAW_SCENE, EXCALIDRAW_MCP_HOST, EXCALIDRAW_MCP_PORT,
-EXCALIDRAW_MCP_TOKEN.
+EXCALIDRAW_MCP_TOKEN, EXCALIDRAW_CHROME.
 `
 
 /** Read the value that follows a flag. */
@@ -101,6 +106,7 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   let host = env['EXCALIDRAW_MCP_HOST'] ?? '127.0.0.1'
   let port = integerOf(env['EXCALIDRAW_MCP_PORT'] ?? '7801', '--port')
   let token = env['EXCALIDRAW_MCP_TOKEN']
+  let chrome = env['EXCALIDRAW_CHROME']
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i] as string
@@ -146,6 +152,10 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
         token = valueAfter(argv, i, arg)
         i += 1
         break
+      case '--chrome':
+        chrome = valueAfter(argv, i, arg)
+        i += 1
+        break
       default:
         throw new UsageError(`unknown argument: ${arg}`)
     }
@@ -159,6 +169,7 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
       host,
       port,
       ...(token !== undefined && token.length > 0 ? { token } : {}),
+      ...(chrome !== undefined && chrome.length > 0 ? { chrome } : {}),
     },
   }
 }
@@ -202,13 +213,20 @@ export interface RunningServer {
  * @returns the close function, plus the URL when serving HTTP.
  */
 export async function serve(options: CliOptions): Promise<RunningServer> {
+  // The renderer reads the environment, so the flag only needs to reach it.
+  if (options.chrome !== undefined) process.env['EXCALIDRAW_CHROME'] = options.chrome
   const scope = await resolveScope(options.workspaces, options.scene)
   // stderr only: stdout is the stdio protocol channel.
   process.stderr.write(`excalidraw-mcp: workspaces ${scope.roots.join(', ')}\n`)
+  const withRendererClosed = (close: () => Promise<void>) => async (): Promise<void> => {
+    await close()
+    const { closeRenderer } = await import('./render.js')
+    await closeRenderer()
+  }
   if (options.transport === 'stdio') {
     const server = createMcpServer(scope)
     await server.connect(new StdioServerTransport())
-    return { close: () => server.close() }
+    return { close: withRendererClosed(() => server.close()) }
   }
   const running = await startHttpServer({
     scope,
@@ -217,7 +235,7 @@ export async function serve(options: CliOptions): Promise<RunningServer> {
     ...(options.token !== undefined ? { token: options.token } : {}),
   })
   process.stderr.write(`excalidraw-mcp: listening on ${running.url}\n`)
-  return { url: running.url, close: running.close }
+  return { url: running.url, close: withRendererClosed(running.close) }
 }
 
 /** Run the CLI, mapping usage errors to exit code 2. */

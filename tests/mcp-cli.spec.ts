@@ -54,6 +54,18 @@ describe('excalidraw-mcp CLI arguments', () => {
     })
   })
 
+  it('reads the browser path from the flag or the environment', () => {
+    expect(parseArgs(['--chrome', '/opt/chrome'], {})).toMatchObject({
+      kind: 'run',
+      options: { chrome: '/opt/chrome' },
+    })
+    expect(parseArgs([], { EXCALIDRAW_CHROME: '/env/chrome' })).toMatchObject({
+      kind: 'run',
+      options: { chrome: '/env/chrome' },
+    })
+    expect(parseArgs([], {})).toMatchObject({ kind: 'run', options: { workspaces: [process.cwd()] } })
+  })
+
   it('returns help and version commands', () => {
     expect(parseArgs(['--help'], {})).toEqual({ kind: 'help' })
     expect(parseArgs(['-v'], {})).toEqual({ kind: 'version' })

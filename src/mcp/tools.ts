@@ -142,23 +142,28 @@ export function registerSceneTools(server: McpServer, scope: WorkspaceScope): vo
   server.registerTool(
     'excalidraw_export',
     {
-      title: 'Export Excalidraw scene to SVG',
+      title: 'Export Excalidraw scene to SVG or PNG',
       description:
-          'Export the canvas of one workspace to an SVG file inside that workspace (pure '
-          + 'node-side rendering — no browser needed). Writes `<workspace>/<path>` (default '
-          + '`.agents/excalidraw/export.svg`). The SVG uses flat fills/strokes (no hand-drawn '
-          + 'texture); text keeps its content and font size.',
+          'Export the canvas of one workspace to an SVG or PNG file inside that workspace. '
+          + 'Rendering uses Excalidraw\'s own export image pipeline in a local headless Chrome, '
+          + 'so hand-drawn texture, embedded images and wrapped text are preserved. Writes '
+          + '`<workspace>/<path>` (default `.agents/excalidraw/export.svg` or `export.png`). '
+          + 'Requires Chrome/Chromium on the host; the error says so when it is missing.',
       inputSchema: {
-        path: z.string().optional().describe('Workspace-relative output path (e.g. "docs/flow.svg"); default ".agents/excalidraw/export.svg".'),
-        transparent: z.boolean().optional().describe('When true, the SVG has a transparent background; default uses the canvas background color.'),
+        path: z.string().optional().describe('Workspace-relative output path (e.g. "docs/flow.png"); default ".agents/excalidraw/export.svg" or "export.png" for PNG.'),
+        format: z.enum(['svg', 'png']).optional().describe('Output format; default "svg".'),
+        scale: z.number().min(0.5).max(4).optional().describe('PNG pixel scale; default 1. Ignored for SVG.'),
+        transparent: z.boolean().optional().describe('When true, the image has a transparent background; default uses the canvas background color.'),
         workspace: workspaceSchema,
       },
       annotations: { openWorldHint: false },
     },
-    async ({ path, transparent, workspace }) => {
+    async ({ path, format, scale, transparent, workspace }) => {
       try {
         return ok(await exportScene(await targetFor(scope, workspace), {
           ...(path !== undefined ? { path } : {}),
+          ...(format !== undefined ? { format } : {}),
+          ...(scale !== undefined ? { scale } : {}),
           ...(transparent !== undefined ? { transparent } : {}),
         }))
       } catch (error) {

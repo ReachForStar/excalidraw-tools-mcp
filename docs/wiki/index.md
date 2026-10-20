@@ -20,7 +20,8 @@ updated: 2026-10-20
 
 - [分支模型与开发流程](decisions/branch-model.md) — `master` + `develop` 两层分支，功能分支按需切出并合回。
 - [MCP 传输选择](decisions/mcp-transports.md) — 默认 stdio，HTTP 采用无状态 Streamable HTTP。
+- [导出渲染器选择](decisions/export-renderer.md) — 导出改用 Excalidraw 官方实现，在本机无头 Chrome 中渲染 SVG/PNG。
 
 ## 查询沉淀 queries
 
-- [SVG 导出透明度单位与容器标签丢失](queries/svg-export-opacity-and-labels.md) — 0–100 与 0–1 单位混用导致形状近透明；容器文字需绑定文本元素。
+- [SVG 导出透明度单位与容器标签丢失](queries/svg-export-opacity-and-labels.md) — 0–100 与 0–1 单位混用导致形状近透明；容器文字需绑定文本元素（现仅影响预览渲染）。

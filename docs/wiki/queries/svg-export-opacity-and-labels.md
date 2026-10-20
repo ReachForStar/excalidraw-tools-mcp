@@ -37,6 +37,8 @@ Math.max(0.05, Math.min(1, numOf(element['opacity']) || 100) / 100)
 - `src/scene.ts`：`sceneToSvg`、`elementFromShape`、`elementsFromShape`、`drawScene`。
 - 测试：`tests/mcp-server.spec.ts` 增加容器标签与 `opacity="1"` 断言。
 
+> 0.5.0 起 `excalidraw_export` 改用 Excalidraw 官方渲染器（见 [导出渲染器选择](../decisions/export-renderer.md)），`sceneToSvg` 只服务 `excalidraw_draw` 的 `previewSvg`。透明度单位与容器绑定文本的处理对预览仍然有效；导出的 `opacity` 断言已随之移除。
+
 ## 复发预防
 
 - 导出相关断言不只看元素是否存在，要检查可见属性（透明度、填充、文字内容）。

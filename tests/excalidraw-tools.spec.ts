@@ -4,9 +4,18 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import { apply, SCENE_RELATIVE } from '../src/index.ts'
+import { closeRenderer, findChrome } from '../src/render.ts'
 import type { Context } from '@deepseek-ai/cordis'
+
+// Export tests need a browser; the rest of the suite runs without one.
+const CHROME = await findChrome().catch(() => undefined)
+const withChrome = it.skipIf(CHROME === undefined)
+
+afterAll(async () => {
+  await closeRenderer()
+})
 
 /** Minimal context double with an inject that forwards to a mock registry. */
 function bench() {
@@ -237,7 +246,7 @@ describe('excalidraw model tools', () => {
     }
   })
 
-  it('export writes an SVG of the scene to the workspace', async () => {
+  withChrome('export writes an SVG of the scene to the workspace', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
     try {
       const b = bench()
@@ -255,17 +264,16 @@ describe('excalidraw model tools', () => {
       const abs = (result as { path: string }).path
       expect(abs.startsWith(workspace)).toBe(true)
       const svg = await readFile(abs, 'utf8')
-      expect(svg).toContain('<svg')
+      expect(svg).toContain('svg-source:excalidraw')
       expect(svg).toContain('<rect')
       expect(svg).toContain('<text')
       expect(svg).toContain('hello')
-      expect(svg).toContain('<polyline')
     } finally {
       await rm(workspace, { recursive: true, force: true })
     }
   })
 
-  it('export honors a custom path and rejects escaping paths', async () => {
+  withChrome('export honors a custom path and rejects escaping paths', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'dsh-excalidraw-tool-'))
     try {
       const b = bench()
