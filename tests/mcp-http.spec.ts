@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -8,6 +7,8 @@ import { startHttpServer, type RunningHttpServer } from '../src/mcp/http.ts'
 import { sceneTarget } from '../src/scene.ts'
 
 const cleanups: (() => Promise<void>)[] = []
+// Project-local scratch root: tests must not write to the system temp directory.
+const TEST_ROOT = join(process.cwd(), 'tmp', 'tests')
 
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map(cleanup => cleanup()))
@@ -27,7 +28,8 @@ async function serve(root: string, token?: string): Promise<RunningHttpServer> {
 
 /** Temporary workspace, removed after each test. */
 async function workspace(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'excalidraw-mcp-http-'))
+  await mkdir(TEST_ROOT, { recursive: true })
+  const dir = await mkdtemp(join(TEST_ROOT, 'http-'))
   cleanups.push(() => rm(dir, { recursive: true, force: true }))
   return dir
 }
