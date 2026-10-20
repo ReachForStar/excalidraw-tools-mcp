@@ -2,7 +2,7 @@
 description: "Excalidraw 场景工具：以 MCP 服务（stdio / Streamable HTTP）或 cordis 插件形式提供读取、写入、绘制、导出。"
 ---
 
-# @reachforstar/dsh-tool-excalidraw
+# @reachforstar/excalidraw-tools
 
 [English](README.md) | 中文
 
@@ -38,7 +38,7 @@ pnpm install
 pnpm run build
 ```
 
-构建产物在 `lib/`，命令行入口为 `lib/mcp.js`。发布后可直接用 `npx -y @reachforstar/dsh-tool-excalidraw`；未发布时使用仓库内的绝对路径。
+构建产物在 `lib/`，命令行入口为 `lib/mcp.js`。发布后可直接用 `npx -y @reachforstar/excalidraw-tools`；未发布时使用仓库内的绝对路径。
 
 <a id="mcp"></a>
 ## 作为 MCP 服务
@@ -193,7 +193,7 @@ claude mcp add --transport http excalidraw http://127.0.0.1:7801/mcp -H "Authori
 
 ```yaml
 - id: tool-excalidraw
-  name: '@reachforstar/dsh-tool-excalidraw'
+  name: '@reachforstar/excalidraw-tools'
 ```
 
 插件没有配置字段。它注入 `ctx.tools`，并通过 `ctx.workspaceRegistry` 解析目标工作区；无归属工作区的会话按会话 `cwd` 处理，两者都没有时调用被拒绝。cordis 相关 peer 依赖均为可选，仅使用 MCP 服务时无需安装。
