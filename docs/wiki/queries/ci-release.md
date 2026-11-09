@@ -85,6 +85,7 @@ Release 工作流会在当前提交上创建或更新 `<version>` tag；不需�
 - `master` Test：run `39435310828`，52 项测试通过。
 - `v0.1.0` Release：run `39435517529`，手动触发；发布说明与 `reachforstar-excalidraw-tools-0.1.0.tgz`（65539 字节）已上传，tag 指向 `f461b39`。
 - `ubuntu-latest` 当前会提示将在 2026-10-19 后迁移到 Ubuntu 26；升级前复核 Chrome 依赖参数。
+- `v0.1.1` Release：run `42579710861`，手动触发；工作流重新执行校验、72 项测试与构建通过，tag `v0.1.1` 指向 `5260b5c`，tarball `reachforstar-excalidraw-tools-0.1.1.tgz`（75594 字节）已上传。
 - 2026-11-09 审查修复后本地 72 项测试通过；CI 与 Release 的新配置待推送后由 Actions 验证。
 
 ## 相关
