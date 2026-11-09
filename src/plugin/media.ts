@@ -58,16 +58,20 @@ export function registerMediaTools(ctx: Context): (() => void)[] {
       }],
       presentationMeta: (_args, value) => previewMeta(value),
     },
-    execute: async (args, exec) => addImage(
-      requireTarget(ctx, exec as ToolExec, args['drawing'], 'excalidraw_add_image'),
-      {
-        path: String(args['path']),
-        ...(typeof args['x'] === 'number' ? { x: args['x'] } : {}),
-        ...(typeof args['y'] === 'number' ? { y: args['y'] } : {}),
-        ...(typeof args['width'] === 'number' ? { width: args['width'] } : {}),
-        ...(typeof args['height'] === 'number' ? { height: args['height'] } : {}),
-      },
-    ),
+    execute: async (args, exec) => {
+      const path = args['path']
+      if (typeof path !== 'string') throw new Error('excalidraw_add_image: `path` must be a string')
+      return addImage(
+        requireTarget(ctx, exec as ToolExec, args['drawing'], 'excalidraw_add_image'),
+        {
+          path,
+          ...(typeof args['x'] === 'number' ? { x: args['x'] } : {}),
+          ...(typeof args['y'] === 'number' ? { y: args['y'] } : {}),
+          ...(typeof args['width'] === 'number' ? { width: args['width'] } : {}),
+          ...(typeof args['height'] === 'number' ? { height: args['height'] } : {}),
+        },
+      )
+    },
     presentCall: args => ({
       card: 'generic',
       title: 'Add image to Excalidraw canvas',

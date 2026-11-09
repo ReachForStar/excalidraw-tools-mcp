@@ -20,6 +20,7 @@ import {
   summarizeScene,
   writeScene,
   type ExportResult,
+  type LoadedScene,
   type SceneTarget,
   type SceneSummary,
 } from './scene.js'
@@ -77,13 +78,8 @@ export interface DeleteDrawingResult {
 }
 
 /** Generate an unused drawing id. */
-async function unusedDrawingId(target: (id: string) => SceneTarget): Promise<string> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const id = `drawing-${randomBytes(4).toString('hex')}`
-    const loaded = await loadSceneParts(target(id))
-    if (!loaded.exists) return id
-  }
-  throw new Error('excalidraw_create_drawing: could not allocate a drawing id')
+function generatedDrawingId(): string {
+  return `drawing-${randomBytes(4).toString('hex')}`
 }
 
 /** Rewrite the scene parser's error prefix for a drawing-management tool. */
@@ -92,10 +88,27 @@ function withToolPrefix(error: unknown, tool: string): Error {
   return new Error(message.replace(/^excalidraw_write: /, `${tool}: `))
 }
 
+/** Write a scene for a drawing tool and shape the metadata result. */
+function drawingResult(
+  target: SceneTarget,
+  id: string,
+  written: { elementCount: number; previewSvg?: string },
+): CreateDrawingResult {
+  return {
+    ok: true,
+    cwd: target.workspace,
+    drawing: id,
+    path: target.scenePath,
+    elementCount: written.elementCount,
+    ...(written.previewSvg !== undefined ? { previewSvg: written.previewSvg } : {}),
+  }
+}
+
 /**
  * Create a drawing. Without an explicit id a fresh `drawing-<hex>` id is
  * generated. The drawing starts empty unless `sceneJson` supplies a complete
- * scene; an existing drawing is never overwritten.
+ * scene; an existing drawing is never overwritten — the create itself is an
+ * exclusive write, so two concurrent creates cannot both succeed.
  * @param workspace - workspace root.
  * @param drawing - requested id; omitted means generate one.
  * @param sceneJson - optional complete scene JSON.
@@ -107,39 +120,27 @@ export async function createDrawing(
   sceneJson?: string,
   sceneOverride?: string,
 ): Promise<CreateDrawingResult> {
-  let id: string
-  if (drawing === undefined || drawing.trim().length === 0) {
-    id = await unusedDrawingId(candidate => sceneTarget(workspace, sceneOverride, candidate))
-  } else {
-    id = normalizeDrawingId(drawing)
-  }
-  const target = sceneTarget(workspace, sceneOverride, id)
-  const existing = await loadSceneParts(target)
-  if (existing.exists) throw new Error(`excalidraw_create_drawing: drawing already exists: ${id}`)
-  if (sceneJson !== undefined && sceneJson.length > 0) {
-    let written: { elementCount: number; previewSvg?: string }
+  const explicit = drawing !== undefined && drawing.trim().length > 0
+  const requested = explicit ? normalizeDrawingId(drawing) : undefined
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const id = requested ?? generatedDrawingId()
+    const target = sceneTarget(workspace, sceneOverride, id)
     try {
-      written = await writeScene(target, sceneJson)
+      if (sceneJson !== undefined && sceneJson.length > 0) {
+        const written = await writeScene(target, sceneJson, { exclusive: true })
+        return drawingResult(target, id, written)
+      }
+      await saveSceneParts(target, { elements: [], appState: {}, files: {} }, { exclusive: true })
+      return drawingResult(target, id, { elementCount: 0 })
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        if (!explicit) continue
+        throw new Error(`excalidraw_create_drawing: drawing already exists: ${id}`)
+      }
       throw withToolPrefix(error, 'excalidraw_create_drawing')
     }
-    return {
-      ok: true,
-      cwd: target.workspace,
-      drawing: id,
-      path: target.scenePath,
-      elementCount: written.elementCount,
-      ...(written.previewSvg !== undefined ? { previewSvg: written.previewSvg } : {}),
-    }
   }
-  const persisted = await saveSceneParts(target, { elements: [], appState: {}, files: {} })
-  return {
-    ok: true,
-    cwd: target.workspace,
-    drawing: id,
-    path: target.scenePath,
-    elementCount: persisted.elements.length,
-  }
+  throw new Error('excalidraw_create_drawing: could not allocate a drawing id')
 }
 
 /**
@@ -168,14 +169,7 @@ export async function updateDrawing(
   } catch (error) {
     throw withToolPrefix(error, 'excalidraw_update_drawing')
   }
-  return {
-    ok: true,
-    cwd: target.workspace,
-    drawing: id,
-    path: target.scenePath,
-    elementCount: written.elementCount,
-    ...(written.previewSvg !== undefined ? { previewSvg: written.previewSvg } : {}),
-  }
+  return drawingResult(target, id, written)
 }
 
 /**
@@ -202,9 +196,9 @@ export async function deleteDrawing(
   return { ok: true, cwd: target.workspace, drawing: id, path: target.scenePath, deleted: true }
 }
 
-/** Build one list entry, tolerating a corrupt scene. */
-async function entryOf(id: string, target: SceneTarget): Promise<DrawingEntry> {
-  const loaded = await loadSceneParts(target)
+/** Build one list entry, reusing an already loaded scene when available. */
+async function entryOf(id: string, target: SceneTarget, preloaded?: LoadedScene): Promise<DrawingEntry> {
+  const loaded = preloaded ?? await loadSceneParts(target)
   if (!loaded.exists) {
     return {
       id,
@@ -255,28 +249,30 @@ export async function listDrawings(
   const drawings: DrawingEntry[] = []
   const defaultTarget = sceneTarget(workspace, sceneOverride)
   const defaultLoaded = await loadSceneParts(defaultTarget)
-  if (defaultLoaded.exists) drawings.push(await entryOf(DEFAULT_DRAWING_ID, defaultTarget))
+  if (defaultLoaded.exists) drawings.push(await entryOf(DEFAULT_DRAWING_ID, defaultTarget, defaultLoaded))
   let names: string[] = []
   try {
     names = await readdir(join(workspace, DRAWINGS_DIRECTORY))
-  } catch {
-    // No named drawings yet.
+  } catch (error) {
+    // A missing drawings directory just means no named drawings yet.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
   const ids = names
     .filter(name => extname(name).toLowerCase() === '.json')
     .map(name => basename(name, extname(name)))
-    .filter((id) => {
+    .flatMap((name) => {
       try {
-        normalizeDrawingId(id)
-        return id !== DEFAULT_DRAWING_ID
+        // File names are not tool input: only names that round-trip through the
+        // id rules could ever be addressed again.
+        const id = normalizeDrawingId(name)
+        return id === name && id !== DEFAULT_DRAWING_ID ? [id] : []
       } catch {
-        return false
+        return []
       }
     })
     .sort()
-  for (const id of ids) {
-    drawings.push(await entryOf(id, sceneTarget(workspace, undefined, id)))
-  }
+  const entries = await Promise.all(ids.map(id => entryOf(id, sceneTarget(workspace, undefined, id))))
+  drawings.push(...entries)
   return { ok: true, cwd: workspace, count: drawings.length, drawings }
 }
 

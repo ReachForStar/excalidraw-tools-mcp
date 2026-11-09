@@ -75,8 +75,9 @@ function dataOf(payload) {
   return {
     elements: payload.elements,
     appState: {
+      ...payload.appState,
       exportBackground: !payload.transparent,
-      viewBackgroundColor: payload.background || '#ffffff',
+      viewBackgroundColor: payload.background || payload.appState.viewBackgroundColor || '#ffffff',
       exportWithDarkMode: false,
       exportPadding: 10,
       exportScale: payload.scale,
@@ -101,12 +102,17 @@ window.excalidrawBridge = {
       },
     })
     const bytes = new Uint8Array(await blob.arrayBuffer())
-    let text = ''
-    for (let i = 0; i < bytes.length; i += 1) text += String.fromCharCode(bytes[i])
+    // Chunk the conversion: byte-at-a-time concatenation is quadratic on large
+    // PNGs and can hit V8's string limit.
+    const chunks = []
+    const CHUNK = 0x8000
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      chunks.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)))
+    }
     const bitmap = await createImageBitmap(blob)
     const size = { width: bitmap.width, height: bitmap.height }
     bitmap.close()
-    return { base64: btoa(text), ...size }
+    return { base64: btoa(chunks.join('')), ...size }
   },
 }
 
@@ -188,7 +194,21 @@ async function startAssetServer(): Promise<{ url: string; close: () => Promise<v
   const server = createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname
     if (path === '/utils.js') {
-      bundle ??= readFile(bundlePath()).then(buffer => buffer)
+      let resolved: string
+      try {
+        // require.resolve is synchronous and can throw; a throw inside the
+        // request callback would crash the process.
+        resolved = bundlePath()
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'text/plain' })
+        res.end(error instanceof Error ? error.message : String(error))
+        return
+      }
+      bundle ??= readFile(resolved).catch((error: unknown) => {
+        // A transient read failure must not poison the cache forever.
+        bundle = undefined
+        throw error
+      })
       void bundle.then((buffer) => {
         res.writeHead(200, { 'content-type': 'text/javascript', 'content-length': buffer.length })
         res.end(buffer)
@@ -312,6 +332,8 @@ class Renderer {
 let shared: Promise<Renderer> | undefined
 /** Renders are serialized: one page, and font/canvas state is global to it. */
 let queue: Promise<unknown> = Promise.resolve()
+/** Set on shutdown; queued renders must not restart a browser that is being closed. */
+let shuttingDown = false
 
 /**
  * Render a scene with Excalidraw's own exporter.
@@ -321,6 +343,7 @@ let queue: Promise<unknown> = Promise.resolve()
  */
 export async function renderScene(scene: RenderScene, options: RenderOptions): Promise<RenderedScene> {
   const run = async (): Promise<RenderedScene> => {
+    if (shuttingDown) throw new Error('the renderer is shutting down')
     try {
       shared ??= Renderer.start()
       return await (await shared).render(scene, options)
@@ -337,10 +360,17 @@ export async function renderScene(scene: RenderScene, options: RenderOptions): P
   return pending
 }
 
-/** Stop the shared browser; safe to call when nothing was started. */
+/**
+ * Stop the shared browser; safe to call when nothing was started. Renders that
+ * are already queued finish or fail before the browser is closed, so the host
+ * cannot leave an orphaned process behind.
+ */
 export async function closeRenderer(): Promise<void> {
+  shuttingDown = true
+  const barrier = queue
   const current = shared
   shared = undefined
+  await barrier.catch(() => undefined)
   if (current === undefined) return
   await current.then(renderer => renderer.close(), () => undefined)
 }
