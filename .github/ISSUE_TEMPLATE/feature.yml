@@ -1,0 +1,29 @@
+name: 功能建议
+description: 提出新能力或改进
+title: 'feat: '
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: 请描述使用场景，而不是只给实现方案。
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景
+      description: 你在完成什么任务时遇到了限制？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 期望的工具、参数或行为；如有替代方案一并说明
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: 兼容性影响
+      description: 是否改变现有工具参数、返回结构或场景格式
+    validations:
+      required: false
