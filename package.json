@@ -1,7 +1,7 @@
 {
   "name": "@reachforstar/excalidraw-tools",
   "description": "Excalidraw canvas tools for MCP (stdio + Streamable HTTP) and cordis: scenes, drawings, elements, layout, images, screenshots and export",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publishConfig": {
     "access": "public"
   },
