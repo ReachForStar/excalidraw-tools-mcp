@@ -10,7 +10,8 @@ import { sceneTarget, type SceneTarget } from '../scene.js'
 
 /** The slice of the tool execution context the tools use. */
 export interface ToolExec {
-  agent?: { session: { id: unknown; header: { cwd?: string } } }
+  /** Hosts may omit `header`; a session without a cwd is simply unresolvable. */
+  agent?: { session: { id: unknown; header?: { cwd?: string } } }
 }
 
 /** Drawing parameter shared by every plugin tool. */
@@ -23,7 +24,9 @@ export const drawingParameter = {
 function workspaceOf(ctx: Context, sessionId: unknown): Workspace | undefined {
   const registry = ctx.get('workspaceRegistry')
   if (registry === undefined || typeof sessionId !== 'string') return undefined
-  return registry.list().find(workspace => workspace.sessionIds.includes(sessionId as never))
+  // Compare as plain strings: a host could store the ids in any string shape,
+  // and `as never` would silently never match.
+  return registry.list().find(workspace => workspace.sessionIds.some(id => String(id) === sessionId))
 }
 
 /** Resolve the scene target from the calling session's workspace or cwd. */
@@ -31,7 +34,7 @@ export function targetOf(ctx: Context, exec: ToolExec, drawing?: unknown): Scene
   const workspace = workspaceOf(ctx, exec.agent?.session.id)
   const id = typeof drawing === 'string' ? drawing : undefined
   if (workspace !== undefined) return sceneTarget(workspace.path, undefined, id)
-  const cwd = exec.agent?.session.header.cwd
+  const cwd = exec.agent?.session.header?.cwd
   return cwd === undefined || cwd.length === 0 ? undefined : sceneTarget(cwd, undefined, id)
 }
 

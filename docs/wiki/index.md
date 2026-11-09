@@ -1,6 +1,6 @@
 ---
 type: index
-updated: 2026-10-20
+updated: 2026-11-09
 ---
 
 # Wiki 索引
@@ -30,3 +30,4 @@ updated: 2026-10-20
 - [部署 MCP 到 mcp.togithub.icu](queries/deploy-mcp-togithub.md) — 单租户公网部署：独立 Nginx、systemd、Chrome、DNS-01 证书、验证结果与续期注意事项。
 - [CI 与 GitHub Release 流程](queries/ci-release.md) — push/PR 验证 typecheck、test、build、pack；`v*` tag 自动发布说明与 tarball。
 - [在四个客户端注册 Excalidraw MCP](queries/mcp-clients-install.md) — Pi、Codex、Claude Code、OpenCode 的远程配置、代理绕过与验证结果。
+- [全库代码审查（ocr scan，2026-11）](queries/ocr-full-scan-2026-11.md) — 26 文件 94 条意见；全部 high/medium 已修复并补 20 项回归测试，0.1.0 尚未发布。

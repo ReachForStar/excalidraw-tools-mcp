@@ -100,3 +100,18 @@
 - 改用本仓库构建产物本地生成：`tmp/gen-hello.mjs` 调 `sceneTarget('tmp/ws')` → `drawScene` → `exportScene`，`format: 'png'`、`scale: 2`，产物 1400×360、33247 字节，拷到 `out/hello-world.png`。
 - 验证：`image-size` 确认 PNG 尺寸；ImageMagick 唯一色列表包含文字色 `#1e1e1e`、边框色 `#1971c2` 与浅蓝填充，手绘纹理正常。
 - 部署页新增「导出文件的落地位置」一节：远程写入路径与本地两条取图路径，及共享画布慎用 `replace` 的注意事项。
+
+## [2026-11-09] query | 全库代码审查（ocr scan）
+- 工作区干净，经用户确认改用 `ocr scan` 全库扫描：26 个源文件、94 条意见（0 critical、14 high、约 43 medium），会话 `11012276-a003-432d-ac80-8dbd8869143c`，原始输出 `tmp/ocr-scan.txt`。
+- 14 条 high 均抽查代码确认：读改写无锁、updateElement 先写后校验、渲染器关闭/超时竞态、HTTP unhandledRejection 与鉴权缺口、截图路径可覆盖任意工作区文件、patch 校验穿透、`exports ./src/*` 发布断链、release 令牌持久化。
+- 本机 git 2.34.1 低于 ocr 最低要求 2.41.0，`code_search` 全部失败，审查缺少跨文件检索上下文。
+- 新增 `queries/ocr-full-scan-2026-11.md`，更新 index；修复范围待用户确认。
+
+## [2026-11-09] fix | 修复全库审查的 high 与 medium 问题
+- 核心数据完整性：场景读改写按文件进程内加锁，整文件写入改为临时文件替换，创建图形用 `flag: "wx"` 排他写；`updateElement` 写入前拒绝 `isDeleted`；删除后刷新被清理元素的 `version` 并回收孤立 `files`；`replace` 可复用旧 id；图片 `fileId` 必须存在于场景。
+- 安全与传输：非回环 HTTP host 强制 token，token 常量时间比较，拒绝非回环 `Origin`；请求体上限 64 MiB、在途上限 32、请求/头部超时；截图路径限定 `.png`，图片上限 10 MiB 并交叉校验 MIME；文件与工作区路径解析软链接后校验包含关系。
+- 渲染与结果：`withRendererClosed` 改 try/finally，`closeRenderer` 增加关闭标记与队列屏障；失败结果改为 `{ ok: false, error }` JSON 并写 stderr；`ok(undefined)` 返回 `null`。
+- 发布配置：删除 `exports ./src/*`；新增 `prepublishOnly`、`noEmitOnError`；CI 加最小权限、并发组与超时；三方 Action 固定到 commit SHA；Release 关闭凭据持久化、按版本串行并拒绝已存在 tag/Release；Chrome 固定 157。
+- 用户决策：场景写入大小保持无上限（0.3.1 决策不推翻）；失败结果格式改为结构化 JSON。
+- 验证：`pnpm typecheck`、`pnpm build` 通过，72 项测试通过（含 20 项新增回归测试）。
+- 未处理（low）：`EMPTY_SUMMARY` 可变单例、插件样板去重、工具名缩写说明等。

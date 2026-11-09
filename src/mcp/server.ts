@@ -35,6 +35,7 @@ const INSTRUCTIONS =
  * @returns a server ready to connect to a transport.
  */
 export function createMcpServer(scope: WorkspaceScope): McpServer {
+  if (scope.roots.length === 0) throw new Error('at least one workspace root is required')
   const server = new McpServer(
     { name: 'excalidraw-mcp', version: pkg.version },
     { capabilities: { tools: {} }, instructions: INSTRUCTIONS },

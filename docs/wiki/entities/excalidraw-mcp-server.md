@@ -3,7 +3,7 @@ title: Excalidraw MCP 服务
 type: entity
 tags: [mcp, excalidraw, 模块, 工具]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-11-09
 sources: [README.md]
 status: active
 ---
@@ -45,29 +45,34 @@ status: active
 | 媒体 | `excalidraw_add_image`、`excalidraw_screenshot` |
 
 - 成功结果：MCP 返回单个文本块，内容为 JSON 文档；`excalidraw_screenshot` 额外返回 `image/png` 内容块。cordis 插件返回结构化对象。
-- 业务失败：MCP 以 `isError: true` 返回错误原因，不中断连接。
-- 全部工具接受可选 `workspace`（绝对路径或相对首个根目录）；画布类工具接受可选 `drawing`，省略时为 `default`。
+- 业务失败：MCP 以 `isError: true` 返回 `{ "ok": false, "error": "<原因>" }` JSON 文本块，原始错误同时写入 stderr；不中断连接。
+- 全部工具接受可选 `workspace`（绝对路径或相对首个根目录）；画布类工具接受可选 `drawing`，省略时为 `default`。空白 `workspace`/`drawing` 在 schema 层拒绝。
 - 默认图形路径 `<workspace>/.agents/excalidraw/scene.json`，命名图形 `<workspace>/.agents/excalidraw/drawings/<id>.json`；`--scene` 只覆盖默认图形。
 - 图形 id 匹配 `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`，拒绝 Windows 设备名与路径穿越。
-- 导出默认路径：默认图形 `.agents/excalidraw/export.svg` / `export.png` / `export.excalidraw`；命名图形 `.agents/excalidraw/exports/<id>.<ext>`。截图默认路径：默认图形 `.agents/excalidraw/screenshot.png`，命名图形 `.agents/excalidraw/screenshots/<id>.png`。
-- 场景文件大小无上限；仅 `excalidraw_read` 在超过 128 KB 时省略 `sceneJson` 回显，摘要、元素列表与 `description` 照常返回。
+- 导出默认路径：默认图形 `.agents/excalidraw/export.svg` / `export.png` / `export.excalidraw`；命名图形 `.agents/excalidraw/exports/<id>.<ext>`。截图默认路径：默认图形 `.agents/excalidraw/screenshot.png`，命名图形 `.agents/excalidraw/screenshots/<id>.png`；自定义截图路径必须以 `.png` 结尾。
+- 场景文件大小无上限；仅 `excalidraw_read` 在超过 128 KB（按 UTF-8 字节）时省略 `sceneJson` 回显，摘要、元素列表与 `description` 照常返回。
 - 描述超过 300 个元素或 64 KB 时截断；预览 SVG 上限 64 KB。
+- 外部图片上限 10 MiB，MIME 由文件头检测并与扩展名交叉校验；截图 PNG 上限 16 MiB。
 
 ### 关键行为
 
 - `excalidraw_read` / `excalidraw_get_drawing` 返回 `cwd`、`drawing`、`path`、`exists`、`summary`、`elements`、`description`，文件较小时附 `sceneJson`。
-- `excalidraw_element_create` 可自带 id，重复 id 整体拒绝；图片元素必须有 `fileId`，应改用 `excalidraw_add_image`。
-- `excalidraw_element_update` 浅合并补丁，`id` 与 `type` 不可改；合并后不可渲染则拒绝写入。
-- `excalidraw_element_delete` 连带删除容器绑定的文本，并清理剩余元素的绑定字段。
-- `excalidraw_layout` 省略 `ids` 时选择全部可见元素；选区扩展到完整分组与绑定文本；复制时重新映射分组、绑定文本与箭头绑定。
-- `excalidraw_add_image` 支持 png/jpeg/gif/webp/svg，按文件头读尺寸，二进制写入场景 `files`；只给一个尺寸时保持宽高比。
-- `excalidraw_screenshot` 与 SVG/PNG 导出共用 Chrome 渲染；`scale` 取 0.5–4，`transparent` 控制背景。
+- 场景写入先写同目录临时文件再重命名，读取方不会看到半截文件；创建图形使用排他写入（`flag: "wx"`），并发创建同名图形只有一方成功。
+- 元素级与布局级读改写在该进程内按场景文件串行（`withSceneLock`），stdio 与 HTTP 并发调用不再互相覆盖。
+- `excalidraw_element_create` 可自带 id，重复 id 整体拒绝；`replace` 时允许复用被丢弃列表中的 id；图片元素必须有 `fileId` 且该 id 已存在于场景 `files`。写入前剔除 `__proto__`/`constructor`/`prototype` 键。
+- `excalidraw_element_update` 浅合并补丁，`id` 与 `type` 不可改；数值字段在 schema 层要求有限数字；合并后不可渲染（含 `isDeleted: true`）在写入前拒绝。
+- `excalidraw_element_delete` 连带删除容器绑定的文本，清理剩余元素的绑定字段（被清理的元素刷新 `version`），并回收不再被引用的 `files`。
+- `excalidraw_layout` 省略 `ids` 时选择全部可见元素；选区扩展到完整分组与绑定文本；复制时重新映射分组、绑定文本与箭头绑定；未知 action 直接报错。
+- `excalidraw_add_image` 支持 png/jpeg/gif/webp/svg，按文件头读尺寸并核对实际类型，二进制写入场景 `files`；只给一个尺寸时保持宽高比。
+- `excalidraw_screenshot` 与 SVG/PNG 导出共用 Chrome 渲染；`scale` 取 0.5–4，`transparent` 控制背景；截图路径限定 `.png`，写入为原子替换。
 - `excalidraw_export` 的 `svg`/`png` 与截图需要本机 Chrome/Chromium；`excalidraw` 格式与 `excalidraw_import` 不需要浏览器。导入保留 `files`，拒绝素材库。
-- 单进程多工作区：`WorkspaceScope` 保存允许的根目录与可选默认场景路径，目标必须位于某个根目录内且已存在。
+- 单进程多工作区：`WorkspaceScope` 保存允许的根目录与可选默认场景路径，目标必须位于某个根目录内且已存在；工作区路径解析软链接后仍须落在根目录内，文件路径解析到最深已存在祖先后再校验包含关系。
 
 ### 命令行
 
-`--workspace`（可重复）、`--scene`（仅单工作区）、`--http`、`--transport`、`--host`、`--port`、`--token`、`--chrome`、`--help`、`--version`；环境变量 `EXCALIDRAW_WORKSPACE`、`EXCALIDRAW_SCENE`、`EXCALIDRAW_MCP_HOST`、`EXCALIDRAW_MCP_PORT`、`EXCALIDRAW_MCP_TOKEN`、`EXCALIDRAW_CHROME`。
+`--workspace`（可重复）、`--scene`（仅单工作区）、`--http`、`--transport`、`--host`、`--port`、`--token`、`--chrome`、`--help`、`--version`；环境变量 `EXCALIDRAW_WORKSPACE`、`EXCALIDRAW_SCENE`、`EXCALIDRAW_MCP_HOST`、`EXCALIDRAW_MCP_PORT`、`EXCALIDRAW_MCP_TOKEN`、`EXCALIDRAW_CHROME`。首个 `-w` 覆盖 `EXCALIDRAW_WORKSPACE`。
+
+HTTP 传输：非回环 `--host` 必须配置 `--token`，否则拒绝启动；token 使用常量时间比较；携带 `Origin` 的请求只接受回环来源；请求体上限 64 MiB（可用 `maxBodyBytes` 覆盖）、在途请求上限 32、请求超时 5 分钟、头部超时 15 秒；监听成功后保留常驻 `error` 监听。
 
 ## 上下游依赖
 
@@ -87,6 +92,7 @@ status: active
 - 0.6.0：新增 `excalidraw_import` 与 `format: "excalidraw"` 原生导出；`excalidraw_draw` 保留已有 `files`。
 - 本次：新增多图形管理、元素级增删改查、布局变换、外部图片插入、画布描述与 PNG 截图；工具从 5 个扩展到 18 个；插件与 MCP 工具按功能拆分模块；引入 `image-size`。
 - 0.1.0：修复 npm 全局安装的 `bin/excalidraw-mcp` 符号链接入口静默退出；入口比较改为先解析真实路径。
+- 审查修复（2026-11）：按 [全库审查](../queries/ocr-full-scan-2026-11.md) 修复 high/medium 项——读改写加进程内锁、原子写与排他创建、`updateElement` 写入前校验、图片大小与 MIME 交叉校验、截图路径限定与体积上限、软链接越界检查、HTTP 鉴权与限流、渲染器关闭竞态、失败结果改结构化 JSON、CI 权限与供应链固定等。
 测试覆盖：`tests/excalidraw-tools.spec.ts`（插件）、`tests/mcp-server.spec.ts`（内存传输、图形/元素/布局/图片/截图）、`tests/mcp-http.spec.ts`（HTTP 与鉴权）、`tests/mcp-cli.spec.ts`（参数解析）、`tests/mcp-entry.spec.ts`（符号链接入口识别），共 52 项。
 
 相关：[多图形存储](../decisions/multi-drawing-storage.md)、[元素级工具面](../decisions/canvas-tools-surface.md)、[MCP 传输选择](../decisions/mcp-transports.md)、[导出渲染器选择](../decisions/export-renderer.md)、[SVG 导出透明度与容器标签](../queries/svg-export-opacity-and-labels.md)、[部署 MCP 到 mcp.togithub.icu](../queries/deploy-mcp-togithub.md)。

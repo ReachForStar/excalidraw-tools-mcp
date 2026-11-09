@@ -68,7 +68,10 @@ export function registerMediaTools(server: McpServer, scope: WorkspaceScope): vo
           + '`.agents/excalidraw/screenshots/<id>.png`). Omit `drawing` for the default '
           + 'drawing.',
       inputSchema: {
-        path: z.string().optional().describe('Workspace-relative output path; default depends on the drawing id.'),
+        path: z.string().min(1).refine(
+          value => value.toLowerCase().endsWith('.png'),
+          'screenshot path must end with .png',
+        ).optional().describe('Workspace-relative output path; must end with .png (default depends on the drawing id).'),
         scale: z.number().min(0.5).max(4).optional().describe('PNG pixel scale; default 1.'),
         transparent: z.boolean().optional().describe('When true, render a transparent background.'),
         workspace: workspaceSchema,

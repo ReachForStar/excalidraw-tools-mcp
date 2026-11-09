@@ -8,15 +8,23 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
         with:
           version: 12
 
@@ -31,9 +39,9 @@ jobs:
 
       - name: Install Chrome
         id: setup-chrome
-        uses: browser-actions/setup-chrome@v2
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2
         with:
-          chrome-version: stable
+          chrome-version: '157'
           install-dependencies: true
 
       - name: Typecheck
@@ -54,5 +62,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: excalidraw-tools-tgz
-          path: reachforstar-excalidraw-tools-*.tgz
+          path: '*.tgz'
           if-no-files-found: error

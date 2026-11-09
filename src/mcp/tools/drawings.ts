@@ -13,7 +13,7 @@ import {
   listDrawings,
   updateDrawing,
 } from '../../drawings.js'
-import { readScene, type WorkspaceScope } from '../../scene.js'
+import { readScene, DEFAULT_DRAWING_ID, type SceneTarget, type WorkspaceScope } from '../../scene.js'
 import {
   drawingSchema,
   fail,
@@ -29,6 +29,11 @@ import {
  * @param scope - workspace roots the tools may operate on.
  */
 export function registerDrawingTools(server: McpServer, scope: WorkspaceScope): void {
+  // Re-resolving inside the drawing helpers must honour the target the tool
+  // already resolved; otherwise an operator scene override leaks into other
+  // workspaces of the same server.
+  const sceneOverrideOf = (target: SceneTarget): string | undefined =>
+    target.drawing === DEFAULT_DRAWING_ID ? target.scenePath : undefined
   server.registerTool(
     'excalidraw_create_drawing',
     {
@@ -49,7 +54,7 @@ export function registerDrawingTools(server: McpServer, scope: WorkspaceScope): 
     async ({ drawing, scene, workspace }) => {
       try {
         const target = await targetOf(scope, workspace)
-        return ok(await createDrawing(target.workspace, drawing, scene, scope.scene))
+        return ok(await createDrawing(target.workspace, drawing, scene, sceneOverrideOf(target)))
       } catch (error) {
         return fail(error)
       }
@@ -97,7 +102,7 @@ export function registerDrawingTools(server: McpServer, scope: WorkspaceScope): 
     async ({ drawing, scene, workspace }) => {
       try {
         const target = await targetOf(scope, workspace, drawing)
-        return ok(await updateDrawing(target.workspace, target.drawing, scene, scope.scene))
+        return ok(await updateDrawing(target.workspace, target.drawing, scene, sceneOverrideOf(target)))
       } catch (error) {
         return fail(error)
       }
@@ -121,7 +126,7 @@ export function registerDrawingTools(server: McpServer, scope: WorkspaceScope): 
     async ({ drawing, workspace }) => {
       try {
         const target = await targetOf(scope, workspace, drawing)
-        return ok(await deleteDrawing(target.workspace, target.drawing, scope.scene))
+        return ok(await deleteDrawing(target.workspace, target.drawing, sceneOverrideOf(target)))
       } catch (error) {
         return fail(error)
       }
@@ -142,7 +147,7 @@ export function registerDrawingTools(server: McpServer, scope: WorkspaceScope): 
     async ({ workspace }) => {
       try {
         const target = await targetOf(scope, workspace)
-        return ok(await listDrawings(target.workspace, scope.scene))
+        return ok(await listDrawings(target.workspace, sceneOverrideOf(target)))
       } catch (error) {
         return fail(error)
       }
@@ -168,7 +173,7 @@ export function registerDrawingTools(server: McpServer, scope: WorkspaceScope): 
     async ({ drawing, path, workspace }) => {
       try {
         const target = await targetOf(scope, workspace, drawing)
-        return ok(await exportDrawingToJson(target.workspace, target.drawing, path, scope.scene))
+        return ok(await exportDrawingToJson(target.workspace, target.drawing, path, sceneOverrideOf(target)))
       } catch (error) {
         return fail(error)
       }

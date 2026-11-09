@@ -3,7 +3,7 @@ title: MCP 传输选择：stdio 与无状态 Streamable HTTP
 type: decision
 tags: [mcp, 传输, 架构]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-11-09
 sources: [README.md]
 status: active
 ---
@@ -31,7 +31,7 @@ status: active
 
 同时提供 stdio（默认）与**无状态** Streamable HTTP：`POST /mcp`，每个请求新建一组 `McpServer` + `StreamableHTTPServerTransport`（不设置 `sessionIdGenerator`），响应使用 JSON 而非 SSE 流。
 
-HTTP 默认绑定 `127.0.0.1`，端口默认 `7801`；设置 `--token` 后校验 `Authorization: Bearer`。
+HTTP 默认绑定 `127.0.0.1`，端口默认 `7801`；非回环 `--host` 必须配置 `--token`，请求校验 `Authorization: Bearer`（常量时间比较）。携带 `Origin` 的请求只接受回环来源，防止浏览器 DNS rebinding；请求体上限 64 MiB、在途请求上限 32、请求/头部超时 5 分钟/15 秒。
 
 ## 理由（决策依据）
 
@@ -42,7 +42,8 @@ HTTP 默认绑定 `127.0.0.1`，端口默认 `7801`；设置 `--token` 后校验
 
 ## 后果（影响与后续）
 
-- 一个进程只绑定一个场景目标；多工作区需要多进程。
+- 一个进程可服务多个工作区；每个工具调用用 `workspace` 指定目标，省略时使用首个根目录。
 - 无状态模式不支持依赖会话的能力（采样、进度订阅、服务端主动通知）。
-- 模型传入的导出路径仍限制在工作区内；`--scene` 只由运维设置。
+- 模型传入的导出路径仍限制在工作区内（解析软链接后校验）；`--scene` 只由运维设置。
+- HTTP 请求体上限（64 MiB）是传输层防护；stdin/stdio 与插件入口不受此限制，场景写入本身仍按决策不设大小上限。
 - 若将来需要会话级能力，需改为有状态传输并引入会话存储与过期策略。

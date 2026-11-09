@@ -1,5 +1,17 @@
+# 依赖与构建产物
 node_modules/
-lib/
+/lib/
 *.tsbuildinfo
-.qmd/
-tmp/
+/dist/
+/coverage/
+
+# 本地检索索引与临时文件
+/.qmd/
+/tmp/
+
+# 本地环境与密钥
+.env
+.env.*
+*.pem
+*.key
+*.log

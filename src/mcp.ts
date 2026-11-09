@@ -18,7 +18,7 @@
  */
 
 import { realpathSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { delimiter, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -56,14 +56,16 @@ Excalidraw canvas tools over the Model Context Protocol.
 Options:
   -w, --workspace <dir>   Workspace root; exports stay inside it (default: cwd).
                           Repeat the flag to serve several workspaces; every
-                          tool call then names its workspace.
+                          tool call then names its workspace. The first flag
+                          replaces EXCALIDRAW_WORKSPACE.
       --scene <path>      Default drawing's scene file, absolute or workspace-relative
                           (default: ${SCENE_RELATIVE}); single-workspace only.
       --http              Serve Streamable HTTP instead of stdio.
       --transport <name>  "stdio" (default) or "http".
       --host <host>       HTTP bind address (default: 127.0.0.1).
       --port <port>       HTTP port, 0 picks a free port (default: 7801).
-      --token <token>     Require "Authorization: Bearer <token>" on HTTP.
+      --token <token>     Require "Authorization: Bearer <token>" on HTTP;
+                          mandatory for any host other than loopback.
       --chrome <path>     Chrome/Chromium executable used to render SVG and PNG
                           exports (default: auto-detect, or EXCALIDRAW_CHROME).
   -h, --help              Show this help.
@@ -101,8 +103,8 @@ export function parseArgs(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   let workspaces = envWorkspaces === undefined
     ? [process.cwd()]
     : envWorkspaces.split(delimiter).filter(entry => entry.length > 0)
-  // The first `-w` replaces the implicit cwd instead of adding to it.
-  let explicitWorkspace = envWorkspaces !== undefined
+  // The first `-w` replaces whatever the environment supplied (or the implicit cwd).
+  let explicitWorkspace = false
   let scene = env['EXCALIDRAW_SCENE']
   let host = env['EXCALIDRAW_MCP_HOST'] ?? '127.0.0.1'
   let port = integerOf(env['EXCALIDRAW_MCP_PORT'] ?? '7801', '--port')
@@ -185,7 +187,15 @@ async function resolveScope(workspaces: readonly string[], scene?: string): Prom
   if (workspaces.length === 0) throw new UsageError('at least one workspace root is required')
   const roots: string[] = []
   for (const workspace of workspaces) {
-    const root = resolve(workspace)
+    const resolved = resolve(workspace)
+    let root: string
+    try {
+      // Resolve symlinks once here: every later containment check compares paths,
+      // and a symlinked root would otherwise be bypassable through its real path.
+      root = await realpath(resolved)
+    } catch {
+      throw new UsageError(`workspace does not exist: ${resolved}`)
+    }
     let info: Awaited<ReturnType<typeof stat>>
     try {
       info = await stat(root)
@@ -220,9 +230,13 @@ export async function serve(options: CliOptions): Promise<RunningServer> {
   // stderr only: stdout is the stdio protocol channel.
   process.stderr.write(`excalidraw-mcp: workspaces ${scope.roots.join(', ')}\n`)
   const withRendererClosed = (close: () => Promise<void>) => async (): Promise<void> => {
-    await close()
-    const { closeRenderer } = await import('./render.js')
-    await closeRenderer()
+    try {
+      await close()
+    } finally {
+      // Always release the browser: a failing server close must not leak Chrome.
+      const { closeRenderer } = await import('./render.js')
+      await closeRenderer()
+    }
   }
   if (options.transport === 'stdio') {
     const server = createMcpServer(scope)

@@ -12,11 +12,29 @@ import {
   getElement,
   updateElement,
 } from '../../elements.js'
-import type { WorkspaceScope } from '../../scene.js'
+import { DRAW_MAX_ELEMENTS, type WorkspaceScope } from '../../scene.js'
 import { drawingSchema, fail, ok, targetOf, workspaceSchema } from './common.js'
 
 /** Raw element object: arbitrary Excalidraw fields. */
 const rawElementSchema = z.record(z.string(), z.unknown())
+
+/** Numeric element fields that must stay finite when a patch touches them. */
+const NUMERIC_PATCH_FIELDS = [
+  'x', 'y', 'width', 'height', 'angle', 'strokeWidth', 'opacity',
+  'fontSize', 'seed', 'version', 'versionNonce',
+] as const
+
+/** Patch schema: identity fields are immutable and geometry must stay numeric. */
+const patchSchema = z.record(z.string(), z.unknown()).superRefine((patch, ctx) => {
+  if ('id' in patch) ctx.addIssue({ code: 'custom', message: '`id` cannot be changed' })
+  if ('type' in patch) ctx.addIssue({ code: 'custom', message: '`type` cannot be changed' })
+  for (const field of NUMERIC_PATCH_FIELDS) {
+    const value = patch[field]
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+      ctx.addIssue({ code: 'custom', message: `\`${field}\` must be a finite number` })
+    }
+  }
+})
 
 /**
  * Register the element tools.
@@ -36,7 +54,7 @@ export function registerElementTools(server: McpServer, scope: WorkspaceScope): 
           + 'rejected. For images use `excalidraw_add_image`, which embeds the file. Omit '
           + '`drawing` for the default drawing.',
       inputSchema: {
-        elements: z.array(rawElementSchema).min(1).max(256).describe('Raw Excalidraw element objects.'),
+        elements: z.array(rawElementSchema).min(1).max(DRAW_MAX_ELEMENTS).describe('Raw Excalidraw element objects.'),
         action: z.enum(['append', 'replace']).optional().describe('"append" (default) adds elements; "replace" clears the element list first.'),
         workspace: workspaceSchema,
         drawing: drawingSchema,
@@ -86,7 +104,7 @@ export function registerElementTools(server: McpServer, scope: WorkspaceScope): 
           + 'the default drawing.',
       inputSchema: {
         id: z.string().min(1).describe('Element id.'),
-        patch: rawElementSchema.describe('Fields to merge into the element (id/type excluded).'),
+        patch: patchSchema.describe('Fields to merge into the element (id/type excluded).'),
         drawing: drawingSchema,
         workspace: workspaceSchema,
       },
