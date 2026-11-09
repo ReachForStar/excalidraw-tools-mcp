@@ -1,0 +1,5 @@
+# pnpm 12 起，overrides 等设置从 package.json 的 pnpm 字段迁移到这里。
+# 插件宿主 dsh-workspace 精确锁定 zod 4.4.3（存在内存耗尽的 DoS 公告），
+# 统一提升到本包直接依赖的 zod 版本；仅影响本仓库的开发与测试环境。
+overrides:
+  zod: "$zod"
