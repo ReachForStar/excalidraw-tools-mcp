@@ -15,3 +15,6 @@ node_modules/
 *.pem
 *.key
 *.log
+
+# 导出与本地生成产物
+/out/
