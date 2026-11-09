@@ -121,3 +121,9 @@
 - 「作为 MCP 服务」扩写：stdio 与 HTTP 传输对比、客户端配置、协议行为（无状态、必需请求头、状态码表）、鉴权与限流、多工作区规则。
 - 同步新行为：非回环必须 token、64 MiB 请求体上限、64/72 项测试、截图 `.png` 限制、图片 10 MiB 与 MIME 校验、软链接越界、失败结果结构化 JSON、代理超时 300 秒。
 - 更新 `queries/ci-release.md`（SHA 固定、权限、并发、Release 拒绝覆盖）与 `queries/deploy-mcp-togithub.md`（代理超时）；实体页测试数改为 72。
+
+## [2026-11-09] chore | 发布 v0.1.1
+- `package.json` 升级到 0.1.1，新增 `docs/releases/v0.1.1.md`，README 安装示例与 Release 链接指向新版本。
+- 本地 `pnpm typecheck`、72 项测试、`pnpm build`、`pnpm pack` 通过；tarball 内容仅含 `lib/`、`package.json` 与 README。
+- Release run `42579710861` 成功：tag `v0.1.1` 指向 `5260b5c`，资产 `reachforstar-excalidraw-tools-0.1.1.tgz`（75594 字节）已上传并抽查版本号。
+- 更新 `queries/ci-release.md` 验证记录与实体页变更记录。
