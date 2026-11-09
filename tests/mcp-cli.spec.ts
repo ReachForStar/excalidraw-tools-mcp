@@ -54,6 +54,13 @@ describe('excalidraw-mcp CLI arguments', () => {
     })
   })
 
+  it('lets the first -w replace the environment workspace list', () => {
+    expect(parseArgs(['-w', '/ws/cli'], { EXCALIDRAW_WORKSPACE: '/ws/env' })).toMatchObject({
+      kind: 'run',
+      options: { workspaces: ['/ws/cli'] },
+    })
+  })
+
   it('reads the browser path from the flag or the environment', () => {
     expect(parseArgs(['--chrome', '/opt/chrome'], {})).toMatchObject({
       kind: 'run',

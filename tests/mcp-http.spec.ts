@@ -78,4 +78,56 @@ describe('excalidraw MCP over Streamable HTTP', () => {
     expect(notAllowed.status).toBe(405)
     expect(notAllowed.headers.get('allow')).toBe('POST')
   })
+
+  it('refuses a non-loopback bind without a bearer token', async () => {
+    const root = await workspace()
+    await expect(startHttpServer({
+      scope: workspaceScope([root]),
+      host: '0.0.0.0',
+      port: 0,
+    })).rejects.toThrow('without --token')
+  })
+
+  it('rejects request bodies above the configured ceiling', async () => {
+    const root = await workspace()
+    const running = await startHttpServer({
+      scope: workspaceScope([root]),
+      host: '127.0.0.1',
+      port: 0,
+      maxBodyBytes: 64,
+    })
+    cleanups.push(() => running.close())
+    const response = await fetch(running.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: 'x'.repeat(200),
+    })
+    expect(response.status).toBe(413)
+  })
+
+  it('rejects browser origins that are not loopback', async () => {
+    const running = await serve(await workspace())
+    const response = await fetch(running.url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        origin: 'http://evil.example',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+    })
+    expect(response.status).toBe(403)
+  })
+
+  it('reports a wildcard bind as loopback in its URL', async () => {
+    const root = await workspace()
+    const running = await startHttpServer({
+      scope: workspaceScope([root]),
+      host: '0.0.0.0',
+      port: 0,
+      token: 'wildcard-test',
+    })
+    cleanups.push(() => running.close())
+    expect(running.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
+  })
 })

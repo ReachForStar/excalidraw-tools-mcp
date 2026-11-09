@@ -6,7 +6,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { DEFAULT_EXPORT_RELATIVE, drawScene, exportScene, importScene, readScene, writeScene } from '../scene.js'
+import { DEFAULT_DRAWING_ID, defaultExportRelative, drawScene, exportScene, importScene, readScene, writeScene } from '../scene.js'
 import { drawingParameter, previewMeta, requireTarget, type ToolExec } from './shared.js'
 
 /**
@@ -66,10 +66,14 @@ export function registerSceneTools(ctx: Context): (() => void)[] {
       },
       render: (_args, value) => {
         const summary = value['summary']
-        const count = typeof summary['elementCount'] === 'number' ? summary['elementCount'] : 0
+        const count = typeof summary === 'object' && summary !== null
+          && typeof (summary as Record<string, unknown>)['elementCount'] === 'number'
+          ? (summary as Record<string, unknown>)['elementCount'] as number
+          : 0
+        const error = typeof value['error'] === 'string' ? ` (${value['error']})` : ''
         return [{
           type: 'text',
-          text: `Excalidraw drawing "${value['drawing']}": ${count} elements.`,
+          text: `Excalidraw drawing "${value['drawing']}": ${count} elements${error}.`,
         }]
       },
     },
@@ -277,25 +281,45 @@ export function registerSceneTools(ctx: Context): (() => void)[] {
     },
     execute: async (args, exec) => {
       const raw = args as {
-        path?: string
-        format?: 'svg' | 'png' | 'excalidraw'
-        scale?: number
-        transparent?: boolean
-        drawing?: string
+        path?: unknown
+        format?: unknown
+        scale?: unknown
+        transparent?: unknown
+        drawing?: unknown
+      }
+      if (raw.path !== undefined && typeof raw.path !== 'string') {
+        throw new Error('excalidraw_export: `path` must be a string')
+      }
+      if (raw.format !== undefined && raw.format !== 'svg' && raw.format !== 'png' && raw.format !== 'excalidraw') {
+        throw new Error('excalidraw_export: `format` must be "svg", "png" or "excalidraw"')
+      }
+      if (raw.scale !== undefined && (typeof raw.scale !== 'number' || !Number.isFinite(raw.scale))) {
+        throw new Error('excalidraw_export: `scale` must be a finite number')
+      }
+      if (raw.transparent !== undefined && typeof raw.transparent !== 'boolean') {
+        throw new Error('excalidraw_export: `transparent` must be a boolean')
       }
       return exportScene(requireTarget(ctx, exec as ToolExec, raw.drawing, 'excalidraw_export'), {
-        ...(raw.path !== undefined ? { path: raw.path } : {}),
+        ...(typeof raw.path === 'string' ? { path: raw.path } : {}),
         ...(raw.format !== undefined ? { format: raw.format } : {}),
-        ...(raw.scale !== undefined ? { scale: raw.scale } : {}),
+        ...(typeof raw.scale === 'number' ? { scale: raw.scale } : {}),
         transparent: raw.transparent === true,
       })
     },
-    presentCall: args => ({
-      card: 'generic',
-      title: 'Export Excalidraw drawing',
-      kind: 'other',
-      rawInput: `path: ${(args as { path?: string }).path ?? DEFAULT_EXPORT_RELATIVE}`,
-    }),
+    presentCall: args => {
+      const format = args['format'] === 'png' || args['format'] === 'excalidraw' ? args['format'] : 'svg'
+      const drawing = typeof args['drawing'] === 'string' && args['drawing'].trim().length > 0
+        ? args['drawing'].trim()
+        : DEFAULT_DRAWING_ID
+      return {
+        card: 'generic',
+        title: 'Export Excalidraw drawing',
+        kind: 'other',
+        rawInput: `path: ${typeof args['path'] === 'string'
+          ? args['path']
+          : defaultExportRelative(format, drawing)}`,
+      }
+    },
   }))
 
   return [read, write, draw, importTool, exportTool]

@@ -13,7 +13,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 /** Fixed scene directory shared by every agent in a workspace. */
@@ -56,6 +56,8 @@ export const PREVIEW_SVG_MAX_BYTES = 64 * 1024
 export const DESCRIPTION_MAX_BYTES = 64 * 1024
 /** Elements listed in a structured description before it is summarized. */
 export const DESCRIPTION_MAX_ELEMENTS = 300
+/** Upper bound on one screenshot PNG; larger renders must lower `scale`. */
+export const MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
 
 /** Lossless JSON value, structurally identical to the host's `JsonValue`. */
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
@@ -180,9 +182,9 @@ export type ExportFormat = 'svg' | 'png' | 'excalidraw'
  */
 export function defaultExportRelative(format: ExportFormat, drawing: string): string {
   if (drawing === DEFAULT_DRAWING_ID) {
-    return format === 'png'
-      ? DEFAULT_EXPORT_PNG_RELATIVE
-      : format === 'excalidraw' ? DEFAULT_EXPORT_FILE_RELATIVE : DEFAULT_EXPORT_RELATIVE
+    if (format === 'png') return DEFAULT_EXPORT_PNG_RELATIVE
+    if (format === 'excalidraw') return DEFAULT_EXPORT_FILE_RELATIVE
+    return DEFAULT_EXPORT_RELATIVE
   }
   const extension = format === 'excalidraw' ? 'excalidraw' : format
   return join(EXPORT_DIRECTORY, `${drawing}.${extension}`)
@@ -307,6 +309,40 @@ export function isWithin(root: string, candidate: string): boolean {
   return rel.length === 0 || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
+/** In-flight mutations keyed by scene file, so concurrent calls never interleave. */
+const sceneLocks = new Map<string, Promise<unknown>>()
+
+/**
+ * Serialize one read-modify-write cycle on a scene file. Only mutations need
+ * this: plain writes are atomic, so readers never observe a partial file, and
+ * parallel replacements resolve last-writer-wins.
+ * @param target - resolved scene target.
+ * @param work - the whole load-change-save cycle.
+ * @returns the result of `work`.
+ */
+export function withSceneLock<T>(target: SceneTarget, work: () => Promise<T>): Promise<T> {
+  const previous = sceneLocks.get(target.scenePath) ?? Promise.resolve()
+  const running = previous.then(work, work)
+  const settled = running.then(() => undefined, () => undefined)
+  sceneLocks.set(target.scenePath, settled)
+  void settled.then(() => {
+    if (sceneLocks.get(target.scenePath) === settled) sceneLocks.delete(target.scenePath)
+  })
+  return running
+}
+
+/** Write then rename, so readers see either the old file or the new one. */
+async function writeFileAtomic(path: string, data: string | Uint8Array): Promise<void> {
+  const tempPath = `${path}.${randomBytes(6).toString('hex')}.tmp`
+  try {
+    await writeFile(tempPath, data)
+    await rename(tempPath, path)
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined)
+    throw error
+  }
+}
+
 /**
  * Build the workspace scope of a server.
  * @param roots - operator-supplied workspace roots.
@@ -357,18 +393,37 @@ export async function targetFor(
   const primary = scope.roots[0] as string
   const candidate = isAbsolute(asked) ? resolve(asked) : resolve(primary, asked)
   // A relative `..` resolves outside the root; containment covers both forms.
-  if (!scope.roots.some(root => isWithin(root, candidate))) {
+  // The real path is what actually gets read, so a symlink inside a root that
+  // points elsewhere must be rejected.
+  let realCandidate: string
+  try {
+    realCandidate = await realpath(candidate)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(`workspace does not exist: ${candidate}`)
+    }
+    throw error
+  }
+  const realRoots = await Promise.all(scope.roots.map(async (root) => {
+    try {
+      return await realpath(root)
+    } catch {
+      return root
+    }
+  }))
+  if (!scope.roots.some((_root, index) => isWithin(realRoots[index] as string, realCandidate))) {
     throw new Error(`workspace "${asked}" is outside the allowed roots: ${scope.roots.join(', ')}`)
   }
   let info: Awaited<ReturnType<typeof stat>>
   try {
-    info = await stat(candidate)
+    info = await stat(realCandidate)
   } catch {
     throw new Error(`workspace does not exist: ${candidate}`)
   }
   if (!info.isDirectory()) throw new Error(`workspace is not a directory: ${candidate}`)
   // The explicit scene pins the configured root; another workspace keeps its own.
-  return sceneTarget(candidate, candidate === primary ? scope.scene : undefined, drawing)
+  const pinned = candidate === primary || realCandidate === primary
+  return sceneTarget(candidate, pinned ? scope.scene : undefined, drawing)
 }
 
 /** True for a tombstoned element that no longer appears on the canvas. */
@@ -538,6 +593,14 @@ function shapeNumber(value: unknown, name: string, fallback: number): number {
     throw new Error(`excalidraw_draw: element field "${name}" must be a number`)
   }
   return value
+}
+
+/** A polyline is 2-1024 `[x,y]` pairs of finite numbers. */
+function isPointList(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 1024) return false
+  return value.every(point => Array.isArray(point) && point.length === 2
+    && typeof point[0] === 'number' && Number.isFinite(point[0])
+    && typeof point[1] === 'number' && Number.isFinite(point[1]))
 }
 
 /**
@@ -1026,9 +1089,14 @@ export async function loadSceneParts(target: SceneTarget): Promise<LoadedScene> 
  * `files` are written only when non-empty, matching Excalidraw's own files.
  * @param target - resolved scene target.
  * @param parts - elements, app state and embedded files.
+ * @param options - `exclusive` fails instead of overwriting an existing file.
  * @returns the parts as persisted.
  */
-export async function saveSceneParts(target: SceneTarget, parts: SceneParts): Promise<SceneParts> {
+export async function saveSceneParts(
+  target: SceneTarget,
+  parts: SceneParts,
+  options: { exclusive?: boolean } = {},
+): Promise<SceneParts> {
   const repaired = sanitizeScene({ elements: parts.elements, appState: parts.appState }) as Record<string, unknown>
   const persisted: Record<string, unknown> = {
     elements: Array.isArray(repaired['elements']) ? repaired['elements'] : [],
@@ -1036,7 +1104,13 @@ export async function saveSceneParts(target: SceneTarget, parts: SceneParts): Pr
   }
   if (Object.keys(parts.files).length > 0) persisted['files'] = parts.files
   await mkdir(dirname(target.scenePath), { recursive: true })
-  await writeFile(target.scenePath, JSON.stringify(persisted), 'utf8')
+  const data = JSON.stringify(persisted)
+  if (options.exclusive === true) {
+    // 'wx' makes competing creates fail instead of silently overwriting.
+    await writeFile(target.scenePath, data, { encoding: 'utf8', flag: 'wx' })
+  } else {
+    await writeFileAtomic(target.scenePath, data)
+  }
   return splitScene(persisted)
 }
 
@@ -1093,7 +1167,7 @@ export async function readScene(target: SceneTarget): Promise<ReadResult> {
     elements: compact,
     description: describeScene(elements, appState, target.drawing),
   }
-  if (loaded.text !== undefined && loaded.text.length <= READ_FULL_JSON_MAX_BYTES) {
+  if (loaded.text !== undefined && Buffer.byteLength(loaded.text, 'utf8') <= READ_FULL_JSON_MAX_BYTES) {
     result.sceneJson = loaded.text
   }
   return result
@@ -1106,9 +1180,14 @@ export async function readScene(target: SceneTarget): Promise<ReadResult> {
  * not capped: the canvas may legitimately grow without bound.
  * @param target - resolved scene target.
  * @param sceneJson - complete scene JSON (`{ elements, appState }`).
+ * @param options - `exclusive` fails instead of overwriting an existing file.
  * @returns the mutation result with an optional preview SVG.
  */
-export async function writeScene(target: SceneTarget, sceneJson: string): Promise<MutationResult> {
+export async function writeScene(
+  target: SceneTarget,
+  sceneJson: string,
+  options: { exclusive?: boolean } = {},
+): Promise<MutationResult> {
   if (sceneJson.length === 0) {
     throw new Error('excalidraw_write: `scene` must be a non-empty JSON string')
   }
@@ -1129,7 +1208,7 @@ export async function writeScene(target: SceneTarget, sceneJson: string): Promis
     elements: record['elements'] as unknown[],
     appState: record['appState'] as Record<string, unknown>,
     files: splitScene(record).files,
-  })
+  }, options)
   const result: MutationResult = {
     ok: true,
     cwd: target.workspace,
@@ -1151,6 +1230,14 @@ export async function writeScene(target: SceneTarget, sceneJson: string): Promis
  * @returns the draw result with an optional preview SVG.
  */
 export async function drawScene(
+  target: SceneTarget,
+  rawShapes: readonly unknown[],
+  action?: string,
+): Promise<DrawResult> {
+  return withSceneLock(target, () => drawSceneLocked(target, rawShapes, action))
+}
+
+async function drawSceneLocked(
   target: SceneTarget,
   rawShapes: readonly unknown[],
   action?: string,
@@ -1179,6 +1266,9 @@ export async function drawScene(
     if (typeof typed !== 'string' || !DRAWABLE_TYPES.has(typed)) {
       skipped += 1
       continue
+    }
+    if (shape['points'] !== undefined && !isPointList(shape['points'])) {
+      throw new Error('excalidraw_draw: `points` must be 2-1024 [x,y] pairs of finite numbers')
     }
     const produced = elementsFromShape({
       type: typed,
@@ -1223,23 +1313,42 @@ export async function drawScene(
 }
 
 /**
- * Reject a caller-supplied file path that could leave the workspace.
+ * Reject a caller-supplied file path that could leave the workspace, including
+ * through a symlink: the deepest existing ancestor is resolved for real and
+ * re-checked before the path is accepted.
  * @param workspace - workspace root.
  * @param relPath - the raw path from the caller.
  * @param tool - tool name used in the rejection message.
  * @returns the absolute path, guaranteed inside the workspace.
  */
-export function resolveWorkspacePath(workspace: string, relPath: string, tool: string): string {
+export async function resolveWorkspacePath(workspace: string, relPath: string, tool: string): Promise<string> {
   const reject = () => new Error(`${tool}: \`path\` must stay inside the workspace`)
   if (relPath.includes('..') || relPath.startsWith('/') || relPath.includes('\\')) {
     throw reject()
   }
-  const abs = resolve(workspace, relPath)
-  const rel = relative(resolve(workspace), abs)
+  const root = resolve(workspace)
+  const abs = resolve(root, relPath)
+  const rel = relative(root, abs)
   if (rel.length === 0 || rel.startsWith('..') || isAbsolute(rel)) {
     throw reject()
   }
-  return abs
+  const rootReal = await realpath(root)
+  let probe = abs
+  for (;;) {
+    let real: string
+    try {
+      real = await realpath(probe)
+    } catch (error) {
+      // A missing output file is fine; walk up to the nearest existing ancestor.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw reject()
+      const parent = dirname(probe)
+      if (parent === probe) throw reject()
+      probe = parent
+      continue
+    }
+    if (!isWithin(rootReal, real)) throw reject()
+    return abs
+  }
 }
 
 /**
@@ -1248,7 +1357,7 @@ export function resolveWorkspacePath(workspace: string, relPath: string, tool: s
  * @param relPath - the raw path from the caller.
  * @returns the absolute output path, guaranteed inside the workspace.
  */
-export function resolveExportPath(workspace: string, relPath: string): string {
+export function resolveExportPath(workspace: string, relPath: string): Promise<string> {
   return resolveWorkspacePath(workspace, relPath, 'excalidraw_export')
 }
 
@@ -1305,7 +1414,7 @@ export async function exportScene(
   const defaultPath = defaultExportRelative(format, target.drawing)
   // Validate the destination before touching the scene: a bad path is a caller
   // error regardless of whether a scene exists yet.
-  const abs = resolveExportPath(
+  const abs = await resolveExportPath(
     target.workspace,
     relPath !== undefined && relPath.length > 0 ? relPath : defaultPath,
   )
@@ -1320,7 +1429,7 @@ export async function exportScene(
   if (format === 'excalidraw') {
     const data = serializeExcalidrawFile(elements, appState, files)
     await mkdir(dirname(abs), { recursive: true })
-    await writeFile(abs, data, 'utf8')
+    await writeFileAtomic(abs, data)
     return {
       ok: true,
       path: abs,
@@ -1339,7 +1448,7 @@ export async function exportScene(
     { format, scale, transparent, background },
   )
   await mkdir(dirname(abs), { recursive: true })
-  await writeFile(abs, rendered.data)
+  await writeFileAtomic(abs, rendered.data)
   return {
     ok: true,
     path: abs,
@@ -1368,11 +1477,14 @@ export async function screenshotScene(
     throw new Error('excalidraw_screenshot: `scale` must be between 0.5 and 4')
   }
   const relPath = options.path?.trim()
-  const abs = resolveWorkspacePath(
-    target.workspace,
-    relPath !== undefined && relPath.length > 0 ? relPath : defaultScreenshotRelative(target.drawing),
-    'excalidraw_screenshot',
-  )
+  const requested = relPath !== undefined && relPath.length > 0
+    ? relPath
+    : defaultScreenshotRelative(target.drawing)
+  // A screenshot is rendered PNG bytes; refuse to overwrite anything else.
+  if (!requested.toLowerCase().endsWith('.png')) {
+    throw new Error('excalidraw_screenshot: `path` must end with .png')
+  }
+  const abs = await resolveWorkspacePath(target.workspace, requested, 'excalidraw_screenshot')
   const loaded = await loadSceneParts(target)
   if (!loaded.exists) {
     throw new Error('excalidraw_screenshot: no scene to screenshot — draw something first')
@@ -1387,8 +1499,14 @@ export async function screenshotScene(
     { elements, appState, ...(Object.keys(files).length > 0 ? { files } : {}) },
     { format: 'png', scale, transparent, background: transparent ? null : backgroundOf(appState) },
   )
+  if (rendered.data.length > MAX_SCREENSHOT_BYTES) {
+    throw new Error(
+      `excalidraw_screenshot: PNG is ${rendered.data.length} bytes, above the ${MAX_SCREENSHOT_BYTES} byte limit; `
+      + 'lower `scale` or the canvas size',
+    )
+  }
   await mkdir(dirname(abs), { recursive: true })
-  await writeFile(abs, rendered.data)
+  await writeFileAtomic(abs, rendered.data)
   return {
     ok: true,
     cwd: target.workspace,
@@ -1415,7 +1533,7 @@ export async function importScene(target: SceneTarget, relPath: string): Promise
   if (trimmed.length === 0) {
     throw new Error('excalidraw_import: `path` is required')
   }
-  const abs = resolveWorkspacePath(target.workspace, trimmed, 'excalidraw_import')
+  const abs = await resolveWorkspacePath(target.workspace, trimmed, 'excalidraw_import')
   let text: string
   try {
     text = await readFile(abs, 'utf8')

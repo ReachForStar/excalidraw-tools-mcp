@@ -7,7 +7,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { extname } from 'node:path'
 import { imageSize } from 'image-size'
 import {
@@ -18,6 +18,7 @@ import {
   saveSceneParts,
   sanitizeScene,
   visibleElements,
+  withSceneLock,
   type SceneParts,
   type SceneTarget,
 } from './scene.js'
@@ -118,6 +119,18 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml',
 }
 
+/** Image types the `image-size` detector reports, mapped to their MIME. */
+const DETECTED_IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+}
+
+/** Reject images above this size before reading them into memory. */
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
 /** Fresh element id. */
 function newElementId(): string {
   return randomBytes(9).toString('base64url')
@@ -150,6 +163,23 @@ function touch(element: Record<string, unknown>): void {
   element['updated'] = Date.now()
 }
 
+/** Keys that would pollute object prototypes if merged into scene data. */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** Reject prototype-polluting keys before caller data reaches the scene. */
+function assertSafeKeys(value: unknown, tool: string, depth = 0): void {
+  if (depth > 64) throw new Error(`${tool}: element data nests too deeply`)
+  if (Array.isArray(value)) {
+    for (const entry of value) assertSafeKeys(entry, tool, depth + 1)
+    return
+  }
+  if (typeof value !== 'object' || value === null) return
+  for (const [key, entry] of Object.entries(value)) {
+    if (FORBIDDEN_KEYS.has(key)) throw new Error(`${tool}: \`${key}\` is not an allowed field`)
+    assertSafeKeys(entry, tool, depth + 1)
+  }
+}
+
 /** Persist changed parts and return a preview when one fits. */
 async function saveWithPreview(
   target: SceneTarget,
@@ -161,10 +191,15 @@ async function saveWithPreview(
 }
 
 /** Validate a raw element object and fill identity/index defaults. */
-function prepareElement(raw: unknown, existingIds: Set<string>): Record<string, unknown> {
+function prepareElement(
+  raw: unknown,
+  existingIds: Set<string>,
+  fileIds: ReadonlySet<string>,
+): Record<string, unknown> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new Error('excalidraw_element_create: every element must be an object')
   }
+  assertSafeKeys(raw, 'excalidraw_element_create')
   const element = structuredClone(raw) as Record<string, unknown>
   const type = element['type']
   if (typeof type !== 'string' || type.length === 0) {
@@ -172,6 +207,11 @@ function prepareElement(raw: unknown, existingIds: Set<string>): Record<string, 
   }
   if (type === 'image' && (typeof element['fileId'] !== 'string' || element['fileId'].length === 0)) {
     throw new Error('excalidraw_element_create: an image element needs `fileId`; use excalidraw_add_image')
+  }
+  if (type === 'image' && !fileIds.has(element['fileId'] as string)) {
+    throw new Error(
+      'excalidraw_element_create: `fileId` is not embedded in the scene; use excalidraw_add_image',
+    )
   }
   const id = element['id']
   if (id !== undefined && (typeof id !== 'string' || id.length === 0)) {
@@ -223,33 +263,58 @@ export async function createElements(
   if (action !== undefined && action !== 'append' && action !== 'replace') {
     throw new Error('excalidraw_element_create: `action` must be "append" or "replace"')
   }
-  const parts = await editableParts(target, 'excalidraw_element_create')
-  const existingIds = new Set<string>()
-  for (const element of parts.elements) {
-    if (typeof element === 'object' && element !== null && typeof (element as Record<string, unknown>)['id'] === 'string') {
-      existingIds.add((element as Record<string, unknown>)['id'] as string)
+  return withSceneLock(target, async () => {
+    const parts = await editableParts(target, 'excalidraw_element_create')
+    // Replace discards the old list, so ids may be reused; only the batch itself
+    // must stay unique.
+    const existingIds = new Set<string>()
+    if (action !== 'replace') {
+      for (const element of parts.elements) {
+        if (typeof element === 'object' && element !== null && typeof (element as Record<string, unknown>)['id'] === 'string') {
+          existingIds.add((element as Record<string, unknown>)['id'] as string)
+        }
+      }
     }
+    const fileIds = new Set(Object.keys(parts.files))
+    const prepared = rawElements.map(raw => prepareElement(raw, existingIds, fileIds))
+    const inputIds = prepared.map(element => element['id'] as string)
+    const elements = action === 'replace' ? prepared : [...parts.elements, ...prepared]
+    const files = action === 'replace' ? pruneFiles(prepared, parts.files) : parts.files
+    const saved = await saveWithPreview(target, { ...parts, elements, files })
+    const persistedIds = new Set(
+      visibleElements(saved.persisted.elements)
+        .map(element => element['id'])
+        .filter((id): id is string => typeof id === 'string'),
+    )
+    const ids = inputIds.filter(id => persistedIds.has(id))
+    return {
+      ok: true,
+      cwd: target.workspace,
+      drawing: target.drawing,
+      added: ids.length,
+      ids,
+      skipped: prepared.length - ids.length,
+      totalElements: saved.persisted.elements.length,
+      ...(saved.previewSvg !== undefined ? { previewSvg: saved.previewSvg } : {}),
+    }
+  })
+}
+
+/** Drop embedded files no surviving element references any more. */
+function pruneFiles(
+  elements: readonly Record<string, unknown>[],
+  files: Record<string, unknown>,
+): Record<string, unknown> {
+  const referenced = new Set<string>()
+  for (const element of elements) {
+    const fileId = element['fileId']
+    if (typeof fileId === 'string') referenced.add(fileId)
   }
-  const prepared = rawElements.map(raw => prepareElement(raw, existingIds))
-  const inputIds = prepared.map(element => element['id'] as string)
-  const elements = action === 'replace' ? prepared : [...parts.elements, ...prepared]
-  const saved = await saveWithPreview(target, { ...parts, elements })
-  const persistedIds = new Set(
-    visibleElements(saved.persisted.elements)
-      .map(element => element['id'])
-      .filter((id): id is string => typeof id === 'string'),
-  )
-  const ids = inputIds.filter(id => persistedIds.has(id))
-  return {
-    ok: true,
-    cwd: target.workspace,
-    drawing: target.drawing,
-    added: ids.length,
-    ids,
-    skipped: prepared.length - ids.length,
-    totalElements: saved.persisted.elements.length,
-    ...(saved.previewSvg !== undefined ? { previewSvg: saved.previewSvg } : {}),
+  const kept: Record<string, unknown> = {}
+  for (const [fileId, file] of Object.entries(files)) {
+    if (referenced.has(fileId)) kept[fileId] = file
   }
+  return kept
 }
 
 /**
@@ -284,41 +349,52 @@ export async function updateElement(
   if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
     throw new Error('excalidraw_element_update: `patch` must be an object')
   }
-  const parts = await editableParts(target, 'excalidraw_element_update')
-  const index = parts.elements.findIndex(element =>
-    typeof element === 'object' && element !== null && (element as Record<string, unknown>)['id'] === id)
-  if (index < 0) throw new Error(`excalidraw_element_update: element not found: ${id}`)
-  const current = parts.elements[index] as Record<string, unknown>
-  if (patch['id'] !== undefined && patch['id'] !== id) {
-    throw new Error('excalidraw_element_update: `id` cannot be changed')
-  }
-  if (patch['type'] !== undefined && patch['type'] !== current['type']) {
-    throw new Error('excalidraw_element_update: `type` cannot be changed')
-  }
-  const merged = { ...structuredClone(current), ...structuredClone(patch), id, type: current['type'] }
-  touch(merged)
-  const check = sanitizeScene({ elements: [structuredClone(merged)], appState: parts.appState }) as {
-    elements?: unknown[]
-  }
-  if (!Array.isArray(check.elements) || check.elements.length === 0) {
-    throw new Error('excalidraw_element_update: the update makes the element unrenderable')
-  }
-  const elements = [...parts.elements]
-  elements[index] = merged
-  const saved = await saveWithPreview(target, { ...parts, elements })
-  const persisted = visibleElements(saved.persisted.elements).find(element => element['id'] === id)
-  if (persisted === undefined) {
-    throw new Error('excalidraw_element_update: the update makes the element unrenderable')
-  }
-  return {
-    ok: true,
-    cwd: target.workspace,
-    drawing: target.drawing,
-    id,
-    element: persisted,
-    totalElements: saved.persisted.elements.length,
-    ...(saved.previewSvg !== undefined ? { previewSvg: saved.previewSvg } : {}),
-  }
+  assertSafeKeys(patch, 'excalidraw_element_update')
+  return withSceneLock(target, async () => {
+    const parts = await editableParts(target, 'excalidraw_element_update')
+    const index = parts.elements.findIndex(element =>
+      typeof element === 'object' && element !== null && (element as Record<string, unknown>)['id'] === id)
+    if (index < 0) throw new Error(`excalidraw_element_update: element not found: ${id}`)
+    const current = parts.elements[index] as Record<string, unknown>
+    if (patch['id'] !== undefined && patch['id'] !== id) {
+      throw new Error('excalidraw_element_update: `id` cannot be changed')
+    }
+    if (patch['type'] !== undefined && patch['type'] !== current['type']) {
+      throw new Error('excalidraw_element_update: `type` cannot be changed')
+    }
+    const merged: Record<string, unknown> = {
+      ...structuredClone(current), ...structuredClone(patch), id, type: current['type'],
+    }
+    touch(merged)
+    // Tombstoned elements survive sanitization but never render, so this check
+    // must run before the file is written — otherwise the caller sees an error
+    // on a mutation that already happened.
+    if (merged['isDeleted'] === true) {
+      throw new Error('excalidraw_element_update: the update makes the element unrenderable')
+    }
+    const check = sanitizeScene({ elements: [structuredClone(merged)], appState: parts.appState }) as {
+      elements?: unknown[]
+    }
+    if (!Array.isArray(check.elements) || check.elements.length === 0) {
+      throw new Error('excalidraw_element_update: the update makes the element unrenderable')
+    }
+    const elements = [...parts.elements]
+    elements[index] = merged
+    const saved = await saveWithPreview(target, { ...parts, elements })
+    const persisted = visibleElements(saved.persisted.elements).find(element => element['id'] === id)
+    if (persisted === undefined) {
+      throw new Error('excalidraw_element_update: the update makes the element unrenderable')
+    }
+    return {
+      ok: true,
+      cwd: target.workspace,
+      drawing: target.drawing,
+      id,
+      element: persisted,
+      totalElements: saved.persisted.elements.length,
+      ...(saved.previewSvg !== undefined ? { previewSvg: saved.previewSvg } : {}),
+    }
+  })
 }
 
 /**
@@ -336,63 +412,74 @@ export async function deleteElements(
   if (!Array.isArray(ids) || ids.length === 0) {
     throw new Error('excalidraw_element_delete: `ids` must be a non-empty array')
   }
-  const parts = await editableParts(target, 'excalidraw_element_delete')
-  const present = new Map<string, Record<string, unknown>>()
-  for (const element of parts.elements) {
-    if (typeof element === 'object' && element !== null && typeof (element as Record<string, unknown>)['id'] === 'string') {
-      present.set((element as Record<string, unknown>)['id'] as string, element as Record<string, unknown>)
+  return withSceneLock(target, async () => {
+    const parts = await editableParts(target, 'excalidraw_element_delete')
+    const present = new Map<string, Record<string, unknown>>()
+    for (const element of parts.elements) {
+      if (typeof element === 'object' && element !== null && typeof (element as Record<string, unknown>)['id'] === 'string') {
+        present.set((element as Record<string, unknown>)['id'] as string, element as Record<string, unknown>)
+      }
     }
-  }
-  const removed = new Set<string>()
-  const missing: string[] = []
-  for (const id of ids) {
-    const element = present.get(id)
-    if (element === undefined) {
-      missing.push(id)
-      continue
-    }
-    removed.add(id)
-    if (Array.isArray(element['boundElements'])) {
-      for (const binding of element['boundElements'] as unknown[]) {
-        if (typeof binding === 'object' && binding !== null
-          && (binding as Record<string, unknown>)['type'] === 'text'
-          && typeof (binding as Record<string, unknown>)['id'] === 'string') {
-          removed.add((binding as Record<string, unknown>)['id'] as string)
+    const removed = new Set<string>()
+    const missing: string[] = []
+    for (const id of ids) {
+      const element = present.get(id)
+      if (element === undefined) {
+        missing.push(id)
+        continue
+      }
+      removed.add(id)
+      if (Array.isArray(element['boundElements'])) {
+        for (const binding of element['boundElements'] as unknown[]) {
+          if (typeof binding === 'object' && binding !== null
+            && (binding as Record<string, unknown>)['type'] === 'text'
+            && typeof (binding as Record<string, unknown>)['id'] === 'string') {
+            removed.add((binding as Record<string, unknown>)['id'] as string)
+          }
         }
       }
     }
-  }
-  const elements = parts.elements
-    .filter(element => typeof element !== 'object' || element === null
-      || !removed.has((element as Record<string, unknown>)['id'] as string))
-    .filter((element): element is Record<string, unknown> => typeof element === 'object' && element !== null)
-  for (const element of elements) {
-    if (Array.isArray(element['boundElements'])) {
-      const kept = (element['boundElements'] as unknown[]).filter(binding =>
-        typeof binding !== 'object' || binding === null
-        || !removed.has((binding as Record<string, unknown>)['id'] as string))
-      element['boundElements'] = kept.length > 0 ? kept : null
-    }
-    for (const field of ['startBinding', 'endBinding'] as const) {
-      const binding = element[field]
-      if (typeof binding === 'object' && binding !== null
-        && removed.has((binding as Record<string, unknown>)['elementId'] as string)) {
-        element[field] = null
+    const elements = parts.elements
+      .filter(element => typeof element !== 'object' || element === null
+        || !removed.has((element as Record<string, unknown>)['id'] as string))
+      .filter((element): element is Record<string, unknown> => typeof element === 'object' && element !== null)
+    for (const element of elements) {
+      // Excalidraw reconciles on `version`; without a touch the cleared
+      // references never reach the canvas (and may be overwritten by peers).
+      let changed = false
+      if (Array.isArray(element['boundElements'])) {
+        const kept = (element['boundElements'] as unknown[]).filter(binding =>
+          typeof binding !== 'object' || binding === null
+          || !removed.has((binding as Record<string, unknown>)['id'] as string))
+        if (kept.length !== (element['boundElements'] as unknown[]).length) changed = true
+        element['boundElements'] = kept.length > 0 ? kept : null
       }
+      for (const field of ['startBinding', 'endBinding'] as const) {
+        const binding = element[field]
+        if (typeof binding === 'object' && binding !== null
+          && removed.has((binding as Record<string, unknown>)['elementId'] as string)) {
+          element[field] = null
+          changed = true
+        }
+      }
+      const containerId = element['containerId']
+      if (typeof containerId === 'string' && removed.has(containerId)) {
+        element['containerId'] = null
+        changed = true
+      }
+      if (changed) touch(element)
     }
-    const containerId = element['containerId']
-    if (typeof containerId === 'string' && removed.has(containerId)) element['containerId'] = null
-  }
-  const saved = await saveWithPreview(target, { ...parts, elements })
-  return {
-    ok: true,
-    cwd: target.workspace,
-    drawing: target.drawing,
-    deleted: [...removed],
-    missing,
-    totalElements: saved.persisted.elements.length,
-    ...(saved.previewSvg !== undefined ? { previewSvg: saved.previewSvg } : {}),
-  }
+    const saved = await saveWithPreview(target, { ...parts, elements, files: pruneFiles(elements, parts.files) })
+    return {
+      ok: true,
+      cwd: target.workspace,
+      drawing: target.drawing,
+      deleted: [...removed],
+      missing,
+      totalElements: saved.persisted.elements.length,
+      ...(saved.previewSvg !== undefined ? { previewSvg: saved.previewSvg } : {}),
+    }
+  })
 }
 
 /** Read an element's numeric geometry, defaulting to zero. */
@@ -543,6 +630,22 @@ export async function layoutScene(
     groupIds?: readonly string[]
   } = {},
 ): Promise<LayoutResult> {
+  if (!(LAYOUT_ACTIONS as readonly string[]).includes(action)) {
+    throw new Error(`excalidraw_layout: unsupported action "${String(action)}"`)
+  }
+  return withSceneLock(target, () => layoutSceneLocked(target, action, options))
+}
+
+async function layoutSceneLocked(
+  target: SceneTarget,
+  action: LayoutAction,
+  options: {
+    ids?: readonly string[]
+    offsetX?: number
+    offsetY?: number
+    groupIds?: readonly string[]
+  },
+): Promise<LayoutResult> {
   const parts = await editableParts(target, 'excalidraw_layout')
   const all = visibleElements(parts.elements)
   if (all.length === 0) throw new Error('excalidraw_layout: the drawing has no elements')
@@ -628,7 +731,7 @@ export async function layoutScene(
       element['locked'] = action === 'lock'
       touch(element)
     }
-  } else {
+  } else if (action === 'duplicate') {
     const offsetX = options.offsetX ?? 20
     const offsetY = options.offsetY ?? 20
     if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) {
@@ -675,10 +778,21 @@ export async function addImage(
 ): Promise<AddImageResult> {
   const trimmed = options.path.trim()
   if (trimmed.length === 0) throw new Error('excalidraw_add_image: `path` is required')
-  const abs = resolveWorkspacePath(target.workspace, trimmed, 'excalidraw_add_image')
+  const abs = await resolveWorkspacePath(target.workspace, trimmed, 'excalidraw_add_image')
   const mimeType = IMAGE_MIME_TYPES[extname(trimmed).toLowerCase()]
   if (mimeType === undefined) {
     throw new Error('excalidraw_add_image: unsupported image type; use png, jpeg, gif, webp or svg')
+  }
+  let size: Awaited<ReturnType<typeof stat>>
+  try {
+    size = await stat(abs)
+  } catch {
+    throw new Error(`excalidraw_add_image: file not found: ${trimmed}`)
+  }
+  if (size.size > MAX_IMAGE_BYTES) {
+    throw new Error(
+      `excalidraw_add_image: ${trimmed} is ${size.size} bytes, above the ${MAX_IMAGE_BYTES} byte limit`,
+    )
   }
   let data: Buffer
   try {
@@ -686,11 +800,19 @@ export async function addImage(
   } catch {
     throw new Error(`excalidraw_add_image: file not found: ${trimmed}`)
   }
-  let intrinsic: { width?: number; height?: number }
+  let intrinsic: { width?: number; height?: number; type?: string }
   try {
     intrinsic = imageSize(data)
   } catch {
     throw new Error(`excalidraw_add_image: ${trimmed} is not a readable ${mimeType} image`)
+  }
+  // The extension is caller-controlled; the detected type must agree with it,
+  // so a renamed file cannot be served with the wrong content type.
+  const detected = intrinsic.type !== undefined ? DETECTED_IMAGE_MIME[intrinsic.type] : undefined
+  if (detected !== mimeType) {
+    throw new Error(
+      `excalidraw_add_image: ${trimmed} is ${detected ?? 'an unsupported format'}, not ${mimeType}`,
+    )
   }
   const intrinsicWidth = intrinsic.width
   const intrinsicHeight = intrinsic.height
@@ -754,32 +876,34 @@ export async function addImage(
     scale: [1, 1],
     crop: null,
   }
-  const parts = await editableParts(target, 'excalidraw_add_image')
-  const saved = await saveWithPreview(target, {
-    ...parts,
-    elements: [...parts.elements, element],
-    files: {
-      ...parts.files,
-      [fileId]: {
-        id: fileId,
-        mimeType,
-        dataURL,
-        created: Date.now(),
+  return withSceneLock(target, async () => {
+    const parts = await editableParts(target, 'excalidraw_add_image')
+    const saved = await saveWithPreview(target, {
+      ...parts,
+      elements: [...parts.elements, element],
+      files: {
+        ...parts.files,
+        [fileId]: {
+          id: fileId,
+          mimeType,
+          dataURL,
+          created: Date.now(),
+        },
       },
-    },
+    })
+    return {
+      ok: true,
+      cwd: target.workspace,
+      drawing: target.drawing,
+      elementId,
+      fileId,
+      path: abs,
+      width: Math.round(width as number),
+      height: Math.round(height as number),
+      mimeType,
+      bytes: data.length,
+      totalElements: saved.persisted.elements.length,
+      ...(saved.previewSvg !== undefined ? { previewSvg: saved.previewSvg } : {}),
+    }
   })
-  return {
-    ok: true,
-    cwd: target.workspace,
-    drawing: target.drawing,
-    elementId,
-    fileId,
-    path: abs,
-    width: Math.round(width as number),
-    height: Math.round(height as number),
-    mimeType,
-    bytes: data.length,
-    totalElements: saved.persisted.elements.length,
-    ...(saved.previewSvg !== undefined ? { previewSvg: saved.previewSvg } : {}),
-  }
 }
