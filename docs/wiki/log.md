@@ -115,3 +115,9 @@
 - 用户决策：场景写入大小保持无上限（0.3.1 决策不推翻）；失败结果格式改为结构化 JSON。
 - 验证：`pnpm typecheck`、`pnpm build` 通过，72 项测试通过（含 20 项新增回归测试）。
 - 未处理（low）：`EMPTY_SUMMARY` 可变单例、插件样板去重、工具名缩写说明等。
+
+## [2026-11-09] docs | 完善 README 与 MCP 服务文档
+- README 新增「快速开始」（本地 HTTP + curl initialize / tools/call 示例，已实测），补充 Node.js 版本说明。
+- 「作为 MCP 服务」扩写：stdio 与 HTTP 传输对比、客户端配置、协议行为（无状态、必需请求头、状态码表）、鉴权与限流、多工作区规则。
+- 同步新行为：非回环必须 token、64 MiB 请求体上限、64/72 项测试、截图 `.png` 限制、图片 10 MiB 与 MIME 校验、软链接越界、失败结果结构化 JSON、代理超时 300 秒。
+- 更新 `queries/ci-release.md`（SHA 固定、权限、并发、Release 拒绝覆盖）与 `queries/deploy-mcp-togithub.md`（代理超时）；实体页测试数改为 72。
