@@ -5,6 +5,8 @@ description: "Excalidraw 画布工具：以 MCP 服务（stdio / Streamable HTTP
 # @reachforstar/excalidraw-tools
 
 [![Test](https://github.com/ReachForStar/excalidraw-tools-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ReachForStar/excalidraw-tools-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](https://nodejs.org)
 
 简体中文
 
@@ -35,6 +37,7 @@ description: "Excalidraw 画布工具：以 MCP 服务（stdio / Streamable HTTP
 - [故障排查](#troubleshooting)
 - [开发与测试](#dev)
 - [已知限制](#known-limitations)
+- [贡献](#contributing)
 - [许可证](#license)
 
 -----
@@ -487,6 +490,7 @@ RestartSec=3
 - **HTTP 暴露面**：默认只绑定回环地址；非回环 host 必须配置 `--token`，否则拒绝启动。token 使用常量时间比较；携带非回环 `Origin` 的请求返回 403（防 DNS rebinding）；请求体上限 64 MiB、在途请求上限 32、请求/头部超时 5 分钟/15 秒。公网部署必须在外层加 TLS 反向代理。
 - **并发写入**：同一进程内对同一场景文件的读改写串行执行，写入采用临时文件替换；多个进程同时写同一场景文件时没有跨进程锁，最后写入者胜出。
 - **密钥**：服务不写入密钥；`--token` 建议通过环境变量传入，避免进入 shell 历史。
+- **报告漏洞**：安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要在公开 Issue 中披露未修复的问题。
 
 <a id="troubleshooting"></a>
 ## 故障排查
@@ -530,7 +534,12 @@ CI 在 push 和 pull request 时执行 typecheck、test、build 与 `pnpm pack`�
 - **HTTP 请求体上限**：传输层限制单请求 64 MiB；超过该体积的大场景只能通过 stdio 写入，场景文件本身不设大小上限。
 - **并发保护限定单进程**：进程内对同一场景文件的读写串行，但多进程同时写同一文件没有跨进程协调。
 
+<a id="contributing"></a>
+## 贡献
+
+欢迎 Issue 与 PR。开发环境、分支模型、提交规范与测试要求见 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
+
 <a id="license"></a>
 ## 许可证
 
-MIT
+MIT，见 [LICENSE](LICENSE)。
