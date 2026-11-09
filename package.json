@@ -5,6 +5,26 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ReachForStar/excalidraw-tools-mcp.git"
+  },
+  "homepage": "https://github.com/ReachForStar/excalidraw-tools-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/ReachForStar/excalidraw-tools-mcp/issues"
+  },
+  "keywords": [
+    "excalidraw",
+    "mcp",
+    "model-context-protocol",
+    "diagram",
+    "whiteboard",
+    "ai-agents",
+    "cordis"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
