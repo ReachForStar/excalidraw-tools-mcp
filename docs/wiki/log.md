@@ -127,3 +127,10 @@
 - 本地 `pnpm typecheck`、72 项测试、`pnpm build`、`pnpm pack` 通过；tarball 内容仅含 `lib/`、`package.json` 与 README。
 - Release run `42579710861` 成功：tag `v0.1.1` 指向 `5260b5c`，资产 `reachforstar-excalidraw-tools-0.1.1.tgz`（75594 字节）已上传并抽查版本号。
 - 更新 `queries/ci-release.md` 验证记录与实体页变更记录。
+
+## [2026-11-09] chore | 完善仓库并设为公开
+- 新增 `LICENSE`（MIT）、`SECURITY.md`、`CONTRIBUTING.md` 与 Issue（bug/feature）、PR 模板；`package.json` 补充 repository/homepage/bugs/keywords/engines。
+- README 增加徽章与贡献入口；移除未引用的 `out/hello-world.png` 并忽略 `/out/`。
+- GitHub 设置：仓库描述与 topics（excalidraw、mcp、model-context-protocol 等）、关闭 wiki、启用私密漏洞报告与依赖漏洞提醒、默认工作流权限 `read`；仓库由私有设为公开。
+- 依赖修复：body-parser 2.4.0、fast-uri 3.1.9；新增 `pnpm-workspace.yaml`，把 dsh-workspace 精确锁定的 zod 4.4.3 提升到直接依赖版本。`pnpm audit` 无已知漏洞，Dependabot 告警清零。
+- 验证：本地 typecheck、72 项测试、build、pack 通过；`master`（`2787b6b`）与 `develop`（`c82fb01`）CI 均成功。
