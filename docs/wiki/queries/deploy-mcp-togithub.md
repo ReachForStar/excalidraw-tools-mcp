@@ -3,7 +3,7 @@ title: 部署 MCP 到 mcp.togithub.icu
 type: query
 tags: [部署, mcp, nginx, certbot, 阿里云, systemd]
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-11-09
 sources: []
 status: active
 ---
@@ -58,9 +58,11 @@ location = /mcp {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header Authorization $http_authorization;
     proxy_buffering off;
-    proxy_read_timeout 180s;
+    proxy_read_timeout 300s;
 }
 ```
+
+说明：服务端请求超时为 5 分钟，代理读写超时不要低于 300 秒；请求体上限与服务端一致（64 MiB），需要时同步调整 `client_max_body_size`。
 
 HTTP 站点把其他请求 301 到 HTTPS；`/.well-known/acme-challenge/` 保留给未来可能的 webroot 验证。
 

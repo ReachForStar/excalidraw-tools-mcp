@@ -93,6 +93,6 @@ HTTP 传输：非回环 `--host` 必须配置 `--token`，否则拒绝启动；t
 - 本次：新增多图形管理、元素级增删改查、布局变换、外部图片插入、画布描述与 PNG 截图；工具从 5 个扩展到 18 个；插件与 MCP 工具按功能拆分模块；引入 `image-size`。
 - 0.1.0：修复 npm 全局安装的 `bin/excalidraw-mcp` 符号链接入口静默退出；入口比较改为先解析真实路径。
 - 审查修复（2026-11）：按 [全库审查](../queries/ocr-full-scan-2026-11.md) 修复 high/medium 项——读改写加进程内锁、原子写与排他创建、`updateElement` 写入前校验、图片大小与 MIME 交叉校验、截图路径限定与体积上限、软链接越界检查、HTTP 鉴权与限流、渲染器关闭竞态、失败结果改结构化 JSON、CI 权限与供应链固定等。
-测试覆盖：`tests/excalidraw-tools.spec.ts`（插件）、`tests/mcp-server.spec.ts`（内存传输、图形/元素/布局/图片/截图）、`tests/mcp-http.spec.ts`（HTTP 与鉴权）、`tests/mcp-cli.spec.ts`（参数解析）、`tests/mcp-entry.spec.ts`（符号链接入口识别），共 52 项。
+测试覆盖：`tests/excalidraw-tools.spec.ts`（插件）、`tests/mcp-server.spec.ts`（内存传输、图形/元素/布局/图片/截图）、`tests/mcp-http.spec.ts`（HTTP、鉴权、限流与 Origin 校验）、`tests/mcp-cli.spec.ts`（参数解析）、`tests/mcp-entry.spec.ts`（符号链接入口识别）、`tests/review-fixes.spec.ts`（并发写、软链接越界、数据完整性回归），共 72 项。
 
 相关：[多图形存储](../decisions/multi-drawing-storage.md)、[元素级工具面](../decisions/canvas-tools-surface.md)、[MCP 传输选择](../decisions/mcp-transports.md)、[导出渲染器选择](../decisions/export-renderer.md)、[SVG 导出透明度与容器标签](../queries/svg-export-opacity-and-labels.md)、[部署 MCP 到 mcp.togithub.icu](../queries/deploy-mcp-togithub.md)。
